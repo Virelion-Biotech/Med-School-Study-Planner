@@ -42,12 +42,19 @@ def plan(request: PlanRequest):
         request.subjects, request.topics, request.exams, request.profile,
         request.start_date, request.days, request.weights,
     )
+    session_ids: list[int] = []
     if request.persist:
         db.save_profile(request.profile)
         db.save_curriculum(request.subjects, request.topics, request.exams)
-        db.save_sessions(result.sessions)
+        session_ids = db.save_sessions(result.sessions)
+    sessions = []
+    for index, session in enumerate(result.sessions):
+        payload = asdict(session) | {"session_type": session.session_type.value}
+        if request.persist:
+            payload["session_id"] = session_ids[index]
+        sessions.append(payload)
     return {
-        "sessions": [asdict(s) | {"session_type": s.session_type.value} for s in result.sessions],
+        "sessions": sessions,
         "subject_minutes": result.subject_minutes,
         "unfulfilled_floor": result.unfulfilled_floor,
         "optimizer": request.optimizer,
