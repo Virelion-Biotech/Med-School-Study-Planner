@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import csv
-import io
 import os
 from dataclasses import asdict
 from datetime import date, timedelta
@@ -15,13 +13,12 @@ from pydantic import BaseModel, Field
 from .adaptation import recalibrated_complexity, update_topic_from_session
 from .analytics import summarize, topic_time_history
 from .export import sessions_csv, snapshot_json
-from .memory import next_memory_state
 from .models import Exam, PriorityWeights, Subject, Topic, UserProfile
 from .optimizer import optimize_week
 from .storage import StudyDB
 from .weekly import generate_balanced_week
 
-app = FastAPI(title="Med School Study Planner", version="0.6.0")
+app = FastAPI(title="Med School Study Planner", version="0.7.0")
 db = StudyDB(os.getenv("STUDY_PLANNER_DB", "study_planner.db"))
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -92,7 +89,7 @@ def root():
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "engine": "adaptive-tiered-optimizer", "ui": "available", "version": "0.6.0"}
+    return {"status": "ok", "engine": "adaptive-tiered-optimizer", "ui": "available", "version": "0.7.0"}
 
 @app.get("/profile")
 def get_profile():
@@ -159,10 +156,7 @@ def remove_exam(exam_id: str):
 
 @app.post("/plan")
 def plan(request: PlanRequest):
-    result = (optimize_week if request.optimizer else generate_balanced_week)(
-        request.subjects, request.topics, request.exams, request.profile,
-        request.start_date, request.days, request.weights,
-    )
+    result = (optimize_week if request.optimizer else generate_balanced_week)(request.subjects, request.topics, request.exams, request.profile, request.start_date, request.days, request.weights)
     session_ids: list[int] = []
     if request.persist:
         db.save_profile(request.profile)
@@ -175,8 +169,8 @@ def plan(request: PlanRequest):
             payload["session_id"] = session_ids[index]
         sessions.append(payload)
     return {"sessions": sessions, "subject_minutes": result.subject_minutes,
-            "unfulfilled_floor": result.unfulfilled_floor, "optimizer": request.optimizer,
-            "persisted": request.persist}
+            "unfulfilled_floor": result.unfulfilled_floor, "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage,
+            "optimizer": request.optimizer, "persisted": request.persist}
 
 @app.post("/sessions/{session_id}/complete")
 def complete(session_id: int, request: CompleteRequest):
@@ -219,11 +213,13 @@ def replan(request: ReplanRequest):
     ids = db.save_sessions(result.sessions)
     sessions = [asdict(s) | {"session_type": s.session_type.value, "session_id": ids[i]} for i, s in enumerate(result.sessions)]
     return {"sessions": sessions, "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor,
-            "optimizer": request.optimizer, "locked_session_ids": request.locked_session_ids}
+            "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage, "optimizer": request.optimizer,
+            "locked_session_ids": request.locked_session_ids}
 
 @app.get("/analytics")
 def analytics():
-    return asdict(summarize(db.snapshot())) | {"topic_time_history": topic_time_history(db.snapshot())}
+    snap = db.snapshot()
+    return asdict(summarize(snap)) | {"topic_time_history": topic_time_history(snap)}
 
 @app.get("/memory/{topic_id}")
 def memory(topic_id: str):
