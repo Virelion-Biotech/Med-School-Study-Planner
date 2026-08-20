@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterator
 
+from .memory import MemoryState
 from .models import Exam, StudySession, Subject, Topic, UserProfile
 
 SCHEMA = """
@@ -32,6 +33,13 @@ CREATE TABLE IF NOT EXISTS study_sessions (
  planned_minutes INTEGER NOT NULL, actual_minutes INTEGER,
  session_type TEXT NOT NULL, performance_score REAL,
  completed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS memory_states (
+ topic_id TEXT PRIMARY KEY REFERENCES topics(id) ON DELETE CASCADE,
+ repetitions INTEGER NOT NULL DEFAULT 0,
+ interval_days INTEGER NOT NULL DEFAULT 0,
+ ease_factor REAL NOT NULL DEFAULT 2.5,
+ stability_days REAL NOT NULL DEFAULT 0,
+ last_rating REAL);
 CREATE INDEX IF NOT EXISTS idx_sessions_date ON study_sessions(session_date);
 CREATE INDEX IF NOT EXISTS idx_sessions_topic ON study_sessions(topic_id);
 CREATE INDEX IF NOT EXISTS idx_topics_subject ON topics(subject_id);
@@ -172,6 +180,21 @@ class StudyDB:
         with self.connection() as conn:
             n = conn.execute("UPDATE study_sessions SET actual_minutes=?, performance_score=?, completed=1 WHERE id=?", (actual_minutes, performance_score, session_id)).rowcount
         if n != 1: raise KeyError(f"session {session_id} not found")
+
+    def get_memory_state(self, topic_id: str) -> MemoryState:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM memory_states WHERE topic_id=?", (topic_id,)).fetchone()
+        if not row:
+            return MemoryState()
+        return MemoryState(row["repetitions"], row["interval_days"], row["ease_factor"], row["stability_days"], row["last_rating"])
+
+    def save_memory_state(self, topic_id: str, state: MemoryState) -> None:
+        with self.connection() as conn:
+            conn.execute("""INSERT INTO memory_states VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(topic_id) DO UPDATE SET repetitions=excluded.repetitions,
+            interval_days=excluded.interval_days,ease_factor=excluded.ease_factor,
+            stability_days=excluded.stability_days,last_rating=excluded.last_rating""",
+            (topic_id, state.repetitions, state.interval_days, state.ease_factor, state.stability_days, state.last_rating))
 
     @staticmethod
     def _topic_from_row(row: sqlite3.Row) -> Topic:
