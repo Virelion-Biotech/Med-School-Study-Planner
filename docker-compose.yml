@@ -1,0 +1,13 @@
+services:
+  planner:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      STUDY_PLANNER_DB: /data/study_planner.db
+    volumes:
+      - planner-data:/data
+    restart: unless-stopped
+
+volumes:
+  planner-data:
