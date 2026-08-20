@@ -60,6 +60,28 @@ uvicorn planner.api:app --reload
 pytest -q
 ```
 
+The local UI is available at `http://127.0.0.1:8000/` and talks to the same FastAPI process.
+
+## GitHub Pages frontend
+
+The static frontend can be deployed as a GitHub Pages project site:
+
+`https://virelion-biotech.github.io/Med-School-Study-Planner/`
+
+The Pages workflow is `.github/workflows/pages.yml`. Before enabling it, create a GitHub repository variable named `PLANNER_API_BASE` containing the public FastAPI URL, for example:
+
+```text
+https://med-school-study-planner-api.example.com
+```
+
+The workflow injects that value into `planner/static/api-config.js` during the Pages build. The frontend then sends API requests to that backend while static assets remain hosted by GitHub Pages.
+
+## Backend deployment
+
+A Render deployment definition is provided in `render.yaml`. It runs FastAPI with the optimizer installed, exposes `/health` for health checks, enables the GitHub Pages origin through CORS, and stores SQLite at `/data/study_planner.db` on a persistent disk.
+
+After deploying the backend, copy its public HTTPS URL into the repository variable `PLANNER_API_BASE`, then run the Pages workflow from Actions or push to `main`.
+
 ## Docker
 
 ```bash
