@@ -16,20 +16,13 @@ from .analytics import summarize, topic_time_history
 from .export import sessions_csv, snapshot_json
 from .models import Exam, PriorityWeights, Subject, Topic, UserProfile, best_exam_for_topic
 from .optimizer import optimize_week
+from .presets import step1_preset
 from .storage import StudyDB
 from .weekly import generate_balanced_week
 
-app = FastAPI(title="Med School Study Planner", version="0.8.0")
-
+app = FastAPI(title="Med School Study Planner", version="0.9.0")
 allowed_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://127.0.0.1:8000,http://localhost:8000").split(",") if origin.strip()]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=r"https://[A-Za-z0-9-]+\.github\.io",
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_origin_regex=r"https://[A-Za-z0-9-]+\.github\.io", allow_credentials=False, allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], allow_headers=["*"])
 
 db = StudyDB(os.getenv("STUDY_PLANNER_DB", "study_planner.db"))
 STATIC_DIR = Path(__file__).parent / "static"
@@ -102,7 +95,7 @@ def root():
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "engine": "adaptive-tiered-optimizer", "ui": "available", "version": "0.8.0"}
+    return {"status": "ok", "engine": "adaptive-tiered-optimizer", "ui": "available", "version": "0.9.0"}
 
 @app.get("/profile")
 def get_profile():
@@ -112,11 +105,26 @@ def get_profile():
 def update_profile(request: ProfileRequest):
     if any(day < 0 or day > 6 for day in request.rest_weekdays):
         raise HTTPException(status_code=422, detail="rest_weekdays values must be 0..6")
-    profile = UserProfile(request.daily_available_minutes, request.minimum_subject_minutes_week,
-                          request.review_fraction, request.max_session_minutes,
-                          tuple(sorted(set(request.rest_weekdays))), tuple(request.energy_pattern))
+    profile = UserProfile(request.daily_available_minutes, request.minimum_subject_minutes_week, request.review_fraction, request.max_session_minutes, tuple(sorted(set(request.rest_weekdays))), tuple(request.energy_pattern))
     db.save_profile(profile)
     return asdict(profile)
+
+@app.post("/setup/step1")
+def setup_step1(start_date: date | None = None):
+    start = start_date or date.today()
+    subjects, topics, exams, profile = step1_preset(start)
+    db.save_profile(profile)
+    db.save_curriculum(subjects, topics, exams)
+    db.delete_uncompleted_sessions_in_range(start, start + timedelta(days=14))
+    result = optimize_week(subjects, topics, exams, profile, start, 7, PriorityWeights())
+    ids = db.save_sessions(result.sessions)
+    sessions = [asdict(s) | {"session_type": s.session_type.value, "session_id": ids[i]} for i, s in enumerate(result.sessions)]
+    return {"preset": "USMLE Step 1", "subjects": len(subjects), "topics": len(topics), "sessions": sessions, "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor, "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage}
+
+@app.get("/presets/step1")
+def get_step1_preset():
+    subjects, topics, exams, profile = step1_preset(date.today())
+    return {"preset": "USMLE Step 1", "subjects": [asdict(s) for s in subjects], "topics": [asdict(t) for t in topics], "exams": [asdict(e) for e in exams], "profile": asdict(profile)}
 
 @app.post("/subjects")
 def create_subject(request: SubjectRequest):
@@ -135,9 +143,7 @@ def remove_subject(subject_id: str):
 
 @app.post("/topics")
 def create_topic(request: TopicRequest):
-    topic = Topic(request.id, request.subject_id, request.name, request.complexity, request.estimated_hours,
-                  request.mastery, request.last_studied, request.next_review_due,
-                  request.self_difficulty, request.volume, request.cognitive_load)
+    topic = Topic(request.id, request.subject_id, request.name, request.complexity, request.estimated_hours, request.mastery, request.last_studied, request.next_review_due, request.self_difficulty, request.volume, request.cognitive_load)
     try:
         db.upsert_topic(topic)
     except ValueError as exc:
@@ -187,9 +193,7 @@ def plan(request: PlanRequest):
         if request.persist:
             payload["session_id"] = session_ids[index]
         sessions.append(payload)
-    return {"sessions": sessions, "subject_minutes": result.subject_minutes,
-            "unfulfilled_floor": result.unfulfilled_floor, "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage,
-            "optimizer": request.optimizer, "persisted": request.persist}
+    return {"sessions": sessions, "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor, "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage, "optimizer": request.optimizer, "persisted": request.persist}
 
 @app.post("/sessions/{session_id}/complete")
 def complete(session_id: int, request: CompleteRequest):
@@ -284,9 +288,7 @@ def replan(request: ReplanRequest):
     subject_minutes = dict(result.subject_minutes)
     for sid, mins in locked_subject_minutes.items():
         subject_minutes[sid] = subject_minutes.get(sid, 0) + mins
-    return {"sessions": sessions, "subject_minutes": subject_minutes, "unfulfilled_floor": result.unfulfilled_floor,
-            "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage, "optimizer": request.optimizer,
-            "locked_session_ids": sorted(locked)}
+    return {"sessions": sessions, "subject_minutes": subject_minutes, "unfulfilled_floor": result.unfulfilled_floor, "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage, "optimizer": request.optimizer, "locked_session_ids": sorted(locked)}
 
 @app.get("/analytics")
 def analytics():
