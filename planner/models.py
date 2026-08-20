@@ -86,7 +86,9 @@ def urgency_score(today: date, exam_date: date | None) -> float:
     if exam_date is None:
         return 0.0
     days = (exam_date - today).days
-    if days <= 0:
+    if days < 0:
+        return 0.0
+    if days == 0:
         return 1.0
     return clamp(1.0 / (1.0 + days / 14.0))
 
