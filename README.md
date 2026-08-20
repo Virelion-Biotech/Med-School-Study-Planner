@@ -1,54 +1,73 @@
 # Med-School-Study-Planner
 
-A complexity-aware, fairness-constrained study scheduling engine for medical education.
+An adaptive, fairness-constrained medical study planner that turns curriculum, exams, mastery, memory state, and real study performance into a continuously replanned schedule.
 
-## Architecture
+## Pipeline
 
-`Curriculum + Exams + Performance -> Priority scoring -> Weekly fairness debt + protected review -> Rule scheduler / CP-SAT optimizer -> Study sessions -> completion -> mastery/review feedback`
+`Curriculum + Exams + Profile -> Complexity + Priority -> Weekly fairness + memory/review -> Rule scheduler / CP-SAT -> Study sessions -> Completion/performance -> Memory + mastery + time calibration -> Replan`
 
-## v0.2 engine
+## Implemented
 
-- Subject / Topic / Exam / StudySession / UserProfile domain model.
-- Complexity estimate from cognitive load, topic volume, and personal difficulty.
-- Priority score from urgency, complexity, mastery gap, exam weighting, and review due state.
-- Weekly fairness debt: subject minimums are treated as explicit weekly obligations instead of daily approximations.
-- Protected review budget that increases as the nearest exam approaches.
-- SQLite persistence for curriculum, exams, topics, sessions, and user settings.
-- Persisted session IDs plus `/sessions/{id}/complete` for actual-time and quiz-performance feedback.
-- Adaptive mastery updates and review-date feedback after completion.
-- Optional OR-Tools CP-SAT optimizer using 15-minute scheduling quanta; automatic Tier-1 fallback when the extra is not installed.
-- Deterministic rule-based scheduling remains the default for a lightweight MVP.
-- Unit tests covering fairness/rest days, adaptation, and SQLite round-trips.
+- Subject, Topic, Exam, StudySession, and UserProfile domain model.
+- Complexity scoring from volume, cognitive load, and personal difficulty.
+- Priority scoring from urgency, complexity, mastery gap, exam weighting, and review state.
+- Weekly subject fairness floors with explicit residual debt.
+- Protected review allocation that increases near exams.
+- SQLite persistence for curriculum, exams, topics, sessions, profile, and memory state.
+- SM-2-inspired transparent memory scheduling with bounded ease/stability.
+- Adaptive mastery updates from session performance.
+- Actual-vs-planned study-time history and complexity recalibration.
+- CP-SAT optimization with daily capacity, rest-day, fairness, locked-session, and near-term exam-coverage constraints.
+- Rule-based fallback when OR-Tools is unavailable or the optimization problem is infeasible.
+- Explicit reporting of unfulfilled fairness and exam-coverage requirements.
+- Drag-and-drop session rescheduling with server-side rest-day, daily-cap, and exam-deadline validation.
+- Locked-session replanning that preserves moved work and accounts for its subject/time/topic coverage.
+- Browser UI for Today, Week, Curriculum, Exams, Insights, session completion, and planner settings.
+- Curriculum/exam CRUD and profile settings UI.
+- JSON snapshot and CSV session exports.
+- Dockerfile + Compose deployment with persistent SQLite storage.
+- GitHub Actions CI with compile checks and full test suite.
 
 ## API
 
 ```text
 GET  /health
+GET  /profile
+PUT  /profile
+POST /subjects
+DELETE /subjects/{id}
+POST /topics
+DELETE /topics/{id}
+POST /exams
+DELETE /exams/{id}
 POST /plan
-POST /sessions/{session_id}/complete
+POST /replan
+POST /sessions/{id}/complete
+POST /sessions/{id}/reschedule
+GET  /analytics
+GET  /memory/{topic_id}
+POST /calibrate
 GET  /snapshot
+GET  /export/snapshot.json
+GET  /export/sessions.csv
 ```
-
-`POST /plan` supports `optimizer=true` for CP-SAT and `persist=true` to store the generated plan. Persisted responses include `session_id` so completion can feed the topic state back into the planner.
 
 ## Run locally
 
 ```bash
-pip install -e '.[test]'
+pip install -e '.[all]'
 uvicorn planner.api:app --reload
 pytest -q
 ```
 
-For the optimizer:
+## Docker
 
 ```bash
-pip install -e '.[test,optimizer]'
+docker compose up --build
 ```
 
-## Roadmap
+The planner stores its SQLite database at `/data/study_planner.db` inside the container volume.
 
-1. Leitner/SM-2 or FSRS-style configurable retention scheduler.
-2. Historical actual-vs-planned time model and per-topic learning curves.
-3. Hard exam coverage constraints and multi-exam conflict optimization.
-4. React + calendar dashboard and session completion UX.
-5. Authentication, exports, analytics, and multi-user deployment.
+## Design principles
+
+The scheduling engine is intentionally interpretable. Optimization is optional, hard constraints are surfaced instead of silently violated, and real usage data is fed back into memory scheduling and complexity estimation rather than treated as static inputs.
