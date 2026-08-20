@@ -38,7 +38,6 @@ CREATE INDEX IF NOT EXISTS idx_topics_subject ON topics(subject_id);
 """
 
 class StudyDB:
-    """SQLite persistence for the MVP; repository boundaries keep a Postgres swap straightforward."""
     def __init__(self, path: str | Path = "study_planner.db") -> None:
         self.path = str(path)
         self.initialize()
@@ -77,43 +76,38 @@ class StudyDB:
                 conn.execute("INSERT OR REPLACE INTO subjects VALUES (?, ?, ?, ?)",
                              (s.id, s.name, s.exam_weight, s.category))
             for t in topics:
-                conn.execute("""INSERT OR REPLACE INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                conn.execute("INSERT OR REPLACE INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                              (t.id, t.subject_id, t.name, t.complexity, t.estimated_hours, t.mastery,
                               t.last_studied.isoformat() if t.last_studied else None,
                               t.next_review_due.isoformat() if t.next_review_due else None,
                               t.self_difficulty, t.volume, t.cognitive_load))
             for e in exams:
                 conn.execute("INSERT OR REPLACE INTO exams VALUES (?, ?, ?, ?, ?)",
-                             (e.id, e.date.isoformat(), json.dumps(e.subject_ids),
-                              json.dumps(e.topic_ids), e.weight))
+                             (e.id, e.date.isoformat(), json.dumps(e.subject_ids), json.dumps(e.topic_ids), e.weight))
 
     def save_sessions(self, sessions: list[StudySession]) -> None:
         with self.connection() as conn:
             for s in sessions:
                 conn.execute(
-                    """INSERT INTO study_sessions
-                    (session_date, topic_id, planned_minutes, actual_minutes, session_type, performance_score)
-                    VALUES (?, ?, ?, ?, ?, ?)""",
-                    (s.date.isoformat(), s.topic_id, s.planned_minutes, s.actual_minutes,
-                     s.session_type.value, s.performance_score),
+                    "INSERT INTO study_sessions (session_date, topic_id, planned_minutes, actual_minutes, session_type, performance_score) VALUES (?, ?, ?, ?, ?, ?)",
+                    (s.date.isoformat(), s.topic_id, s.planned_minutes, s.actual_minutes, s.session_type.value, s.performance_score),
                 )
+
+    def get_topic_for_session(self, session_id: int) -> Topic | None:
+        with self.connection() as conn:
+            row = conn.execute("SELECT t.* FROM study_sessions s JOIN topics t ON t.id=s.topic_id WHERE s.id=?", (session_id,)).fetchone()
+        return self._topic_from_row(row) if row else None
 
     def complete_session(self, session_id: int, actual_minutes: int, performance_score: float) -> None:
         if actual_minutes < 0 or not 0 <= performance_score <= 1:
             raise ValueError("actual_minutes must be >= 0 and performance_score must be in [0, 1]")
         with self.connection() as conn:
-            updated = conn.execute(
-                "UPDATE study_sessions SET actual_minutes=?, performance_score=?, completed=1 WHERE id=?",
-                (actual_minutes, performance_score, session_id),
-            ).rowcount
+            updated = conn.execute("UPDATE study_sessions SET actual_minutes=?, performance_score=?, completed=1 WHERE id=?", (actual_minutes, performance_score, session_id)).rowcount
         if updated != 1:
             raise KeyError(f"session {session_id} not found")
 
-    def get_topic(self, topic_id: str) -> Topic | None:
-        with self.connection() as conn:
-            row = conn.execute("SELECT * FROM topics WHERE id=?", (topic_id,)).fetchone()
-        if row is None:
-            return None
+    @staticmethod
+    def _topic_from_row(row: sqlite3.Row) -> Topic:
         return Topic(
             id=row["id"], subject_id=row["subject_id"], name=row["name"], complexity=row["complexity"],
             estimated_hours=row["estimated_hours"], mastery=row["mastery"],
@@ -122,11 +116,15 @@ class StudyDB:
             self_difficulty=row["self_difficulty"], volume=row["volume"], cognitive_load=row["cognitive_load"],
         )
 
+    def get_topic(self, topic_id: str) -> Topic | None:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM topics WHERE id=?", (topic_id,)).fetchone()
+        return self._topic_from_row(row) if row else None
+
     def update_topic(self, topic: Topic) -> None:
         with self.connection() as conn:
             conn.execute(
-                """UPDATE topics SET complexity=?, estimated_hours=?, mastery=?, last_studied=?,
-                next_review_due=?, self_difficulty=?, volume=?, cognitive_load=? WHERE id=?""",
+                "UPDATE topics SET complexity=?, estimated_hours=?, mastery=?, last_studied=?, next_review_due=?, self_difficulty=?, volume=?, cognitive_load=? WHERE id=?",
                 (topic.complexity, topic.estimated_hours, topic.mastery,
                  topic.last_studied.isoformat() if topic.last_studied else None,
                  topic.next_review_due.isoformat() if topic.next_review_due else None,
@@ -137,9 +135,7 @@ class StudyDB:
         week_end = week_start + timedelta(days=7)
         with self.connection() as conn:
             row = conn.execute(
-                """SELECT COALESCE(SUM(s.actual_minutes), 0) minutes
-                FROM study_sessions s JOIN topics t ON t.id=s.topic_id
-                WHERE s.completed=1 AND t.subject_id=? AND s.session_date>=? AND s.session_date<?""",
+                "SELECT COALESCE(SUM(s.actual_minutes), 0) minutes FROM study_sessions s JOIN topics t ON t.id=s.topic_id WHERE s.completed=1 AND t.subject_id=? AND s.session_date>=? AND s.session_date<?",
                 (subject_id, week_start.isoformat(), week_end.isoformat()),
             ).fetchone()
         return int(row["minutes"])
