@@ -6,7 +6,6 @@
   <meta name="theme-color" content="#0f766e" />
   <title>Med School Study Planner</title>
   <link rel="stylesheet" href="./styles.css" />
-  <link rel="stylesheet" href="./admin.css" />
 </head>
 <body>
   <div class="app-shell">
@@ -17,40 +16,28 @@
       </div>
       <div class="side-label">Plan</div>
       <nav id="nav">
-        <button class="nav-item active" data-view="today"><span>Today</span></button>
-        <button class="nav-item" data-view="week"><span>Week</span></button>
-        <button class="nav-item" data-view="curriculum"><span>Curriculum</span></button>
-        <button class="nav-item" data-view="exams"><span>Exams</span></button>
-        <button class="nav-item" data-view="insights"><span>Insights</span></button>
+        <button class="nav-item active" data-view="today"><span class="nav-icon"></span><span>Today</span></button>
+        <button class="nav-item" data-view="week"><span class="nav-icon"></span><span>Week</span></button>
+        <button class="nav-item" data-view="curriculum"><span class="nav-icon"></span><span>Curriculum</span></button>
+        <button class="nav-item" data-view="exams"><span class="nav-icon"></span><span>Exams</span></button>
+        <button class="nav-item" data-view="insights"><span class="nav-icon"></span><span>Insights</span></button>
       </nav>
       <div class="sidebar-guide">
-        <div class="guide-kicker">START HERE</div>
-        <strong>1. Add your curriculum</strong>
-        <span>2. Add exams</span>
-        <span>3. Generate your week</span>
+        <div class="guide-kicker">START HERE</div><strong>1. Curriculum</strong><span>2. Exams</span><span>3. Generate week</span>
       </div>
       <div class="sidebar-foot"><span class="status-dot"></span><span id="engine-status">Connecting…</span></div>
     </aside>
-
     <main class="main">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Adaptive planning</p>
-          <h1 id="page-title">Today</h1>
-          <p class="topbar-sub">Your schedule changes as your mastery and actual study time change.</p>
-        </div>
-        <div class="toolbar">
-          <button id="seed" class="btn ghost">Load demo</button>
-          <button id="replan" class="btn primary">Replan week</button>
-        </div>
+        <div><p class="eyebrow">Adaptive planning</p><h1 id="page-title">Today</h1><p id="page-subtitle" class="topbar-sub">Your most important work, pulled together for today.</p></div>
+        <div class="toolbar"><button id="seed" class="btn ghost">Load demo</button><button id="replan" class="btn primary">Replan week</button></div>
       </header>
       <section id="view" class="view"></section>
     </main>
   </div>
-
   <div id="session-modal" class="modal hidden" aria-hidden="true">
-    <div class="modal-card session-drawer">
-      <div class="modal-head"><div><div class="eyebrow">Study session</div><h3 id="modal-title">Session</h3><div id="modal-meta" class="meta"></div></div><button id="modal-close" class="close" aria-label="Close">×</button></div>
+    <div class="modal-card">
+      <div class="modal-head"><div><div class="eyebrow">Study session</div><h3 id="modal-title">Session</h3><div id="modal-meta" class="meta"></div></div><button id="modal-close" class="close">×</button></div>
       <div class="session-summary"><div><span>Planned</span><strong id="modal-planned">—</strong></div><div><span>Type</span><strong id="modal-type">—</strong></div><div><span>Subject</span><strong id="modal-subject">—</strong></div></div>
       <div class="form-grid"><div class="field"><label for="actual-minutes">Actual minutes</label><input id="actual-minutes" type="number" min="0" step="5" /></div><div class="field"><label for="score">Performance score</label><input id="score" type="number" min="0" max="1" step="0.01" placeholder="0.00–1.00" /></div></div>
       <div class="score-helper"><span>0.0 = poor recall</span><span>0.75 = solid</span><span>1.0 = excellent</span></div>
@@ -58,11 +45,7 @@
     </div>
   </div>
   <div id="toast" class="toast" role="status"></div>
-
   <script src="./api-config.js"></script>
   <script src="./app.js" defer></script>
-  <script src="./admin.js" defer></script>
-  <script src="./bridge.js" defer></script>
-  <script src="./finalize.js" defer></script>
 </body>
 </html>
