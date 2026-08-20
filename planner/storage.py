@@ -93,22 +93,15 @@ class StudyDB:
     def load_curriculum(self) -> tuple[list[Subject], list[Topic], list[Exam]]:
         snap = self.snapshot()
         subjects = [Subject(s["id"], s["name"], s["exam_weight"], s["category"]) for s in snap["subjects"]]
-        topics = [Topic(id=t["id"], subject_id=t["subject_id"], name=t["name"], complexity=t["complexity"],
-                        estimated_hours=t["estimated_hours"], mastery=t["mastery"],
-                        last_studied=date.fromisoformat(t["last_studied"]) if t["last_studied"] else None,
-                        next_review_due=date.fromisoformat(t["next_review_due"]) if t["next_review_due"] else None,
-                        self_difficulty=t["self_difficulty"], volume=t["volume"], cognitive_load=t["cognitive_load"])
-                  for t in snap["topics"]]
-        exams = [Exam(e["id"], date.fromisoformat(e["exam_date"]), tuple(json.loads(e["subject_ids_json"])),
-                      tuple(json.loads(e["topic_ids_json"])), e["weight"]) for e in snap["exams"]]
+        topics = [Topic(id=t["id"], subject_id=t["subject_id"], name=t["name"], complexity=t["complexity"], estimated_hours=t["estimated_hours"], mastery=t["mastery"], last_studied=date.fromisoformat(t["last_studied"]) if t["last_studied"] else None, next_review_due=date.fromisoformat(t["next_review_due"]) if t["next_review_due"] else None, self_difficulty=t["self_difficulty"], volume=t["volume"], cognitive_load=t["cognitive_load"]) for t in snap["topics"]]
+        exams = [Exam(e["id"], date.fromisoformat(e["exam_date"]), tuple(json.loads(e["subject_ids_json"])), tuple(json.loads(e["topic_ids_json"])), e["weight"]) for e in snap["exams"]]
         return subjects, topics, exams
 
     def save_sessions(self, sessions: list[StudySession]) -> list[int]:
         ids: list[int] = []
         with self.connection() as conn:
             for s in sessions:
-                cur = conn.execute("INSERT INTO study_sessions (session_date, topic_id, planned_minutes, actual_minutes, session_type, performance_score) VALUES (?, ?, ?, ?, ?, ?)",
-                                   (s.date.isoformat(), s.topic_id, s.planned_minutes, s.actual_minutes, s.session_type.value, s.performance_score))
+                cur = conn.execute("INSERT INTO study_sessions (session_date, topic_id, planned_minutes, actual_minutes, session_type, performance_score) VALUES (?, ?, ?, ?, ?, ?)", (s.date.isoformat(), s.topic_id, s.planned_minutes, s.actual_minutes, s.session_type.value, s.performance_score))
                 ids.append(int(cur.lastrowid))
         return ids
 
@@ -119,9 +112,15 @@ class StudyDB:
             if row["completed"]: raise ValueError("completed sessions cannot be rescheduled")
             conn.execute("UPDATE study_sessions SET session_date=? WHERE id=?", (new_date.isoformat(), session_id))
 
-    def delete_uncompleted_sessions_in_range(self, start: date, end: date) -> None:
+    def delete_uncompleted_sessions_in_range(self, start: date, end: date, preserve_ids: set[int] | None = None) -> None:
+        preserve_ids = preserve_ids or set()
         with self.connection() as conn:
-            conn.execute("DELETE FROM study_sessions WHERE completed=0 AND session_date>=? AND session_date<?", (start.isoformat(), end.isoformat()))
+            if preserve_ids:
+                placeholders = ",".join("?" for _ in preserve_ids)
+                params: list[object] = [start.isoformat(), end.isoformat(), *sorted(preserve_ids)]
+                conn.execute(f"DELETE FROM study_sessions WHERE completed=0 AND session_date>=? AND session_date<? AND id NOT IN ({placeholders})", params)
+            else:
+                conn.execute("DELETE FROM study_sessions WHERE completed=0 AND session_date>=? AND session_date<?", (start.isoformat(), end.isoformat()))
 
     def get_topic_for_session(self, session_id: int) -> Topic | None:
         with self.connection() as conn:
@@ -132,17 +131,12 @@ class StudyDB:
         if actual_minutes < 0 or not 0 <= performance_score <= 1:
             raise ValueError("actual_minutes must be >= 0 and performance_score must be in [0, 1]")
         with self.connection() as conn:
-            n = conn.execute("UPDATE study_sessions SET actual_minutes=?, performance_score=?, completed=1 WHERE id=?",
-                             (actual_minutes, performance_score, session_id)).rowcount
+            n = conn.execute("UPDATE study_sessions SET actual_minutes=?, performance_score=?, completed=1 WHERE id=?", (actual_minutes, performance_score, session_id)).rowcount
         if n != 1: raise KeyError(f"session {session_id} not found")
 
     @staticmethod
     def _topic_from_row(row: sqlite3.Row) -> Topic:
-        return Topic(id=row["id"], subject_id=row["subject_id"], name=row["name"], complexity=row["complexity"],
-                     estimated_hours=row["estimated_hours"], mastery=row["mastery"],
-                     last_studied=date.fromisoformat(row["last_studied"]) if row["last_studied"] else None,
-                     next_review_due=date.fromisoformat(row["next_review_due"]) if row["next_review_due"] else None,
-                     self_difficulty=row["self_difficulty"], volume=row["volume"], cognitive_load=row["cognitive_load"])
+        return Topic(id=row["id"], subject_id=row["subject_id"], name=row["name"], complexity=row["complexity"], estimated_hours=row["estimated_hours"], mastery=row["mastery"], last_studied=date.fromisoformat(row["last_studied"]) if row["last_studied"] else None, next_review_due=date.fromisoformat(row["next_review_due"]) if row["next_review_due"] else None, self_difficulty=row["self_difficulty"], volume=row["volume"], cognitive_load=row["cognitive_load"])
 
     def get_topic(self, topic_id: str) -> Topic | None:
         with self.connection() as conn:
@@ -151,19 +145,14 @@ class StudyDB:
 
     def update_topic(self, topic: Topic) -> None:
         with self.connection() as conn:
-            conn.execute("UPDATE topics SET complexity=?, estimated_hours=?, mastery=?, last_studied=?, next_review_due=?, self_difficulty=?, volume=?, cognitive_load=? WHERE id=?",
-                         (topic.complexity, topic.estimated_hours, topic.mastery, topic.last_studied.isoformat() if topic.last_studied else None,
-                          topic.next_review_due.isoformat() if topic.next_review_due else None, topic.self_difficulty, topic.volume, topic.cognitive_load, topic.id))
+            conn.execute("UPDATE topics SET complexity=?, estimated_hours=?, mastery=?, last_studied=?, next_review_due=?, self_difficulty=?, volume=?, cognitive_load=? WHERE id=?", (topic.complexity, topic.estimated_hours, topic.mastery, topic.last_studied.isoformat() if topic.last_studied else None, topic.next_review_due.isoformat() if topic.next_review_due else None, topic.self_difficulty, topic.volume, topic.cognitive_load, topic.id))
 
     def weekly_completed_minutes(self, week_start: date, subject_id: str) -> int:
         week_end = week_start + timedelta(days=7)
         with self.connection() as conn:
-            row = conn.execute("SELECT COALESCE(SUM(s.actual_minutes),0) minutes FROM study_sessions s JOIN topics t ON t.id=s.topic_id WHERE s.completed=1 AND t.subject_id=? AND s.session_date>=? AND s.session_date<?",
-                               (subject_id, week_start.isoformat(), week_end.isoformat())).fetchone()
+            row = conn.execute("SELECT COALESCE(SUM(s.actual_minutes),0) minutes FROM study_sessions s JOIN topics t ON t.id=s.topic_id WHERE s.completed=1 AND t.subject_id=? AND s.session_date>=? AND s.session_date<?", (subject_id, week_start.isoformat(), week_end.isoformat())).fetchone()
         return int(row["minutes"])
 
     def snapshot(self) -> dict:
         with self.connection() as conn:
-            return {name: [dict(r) for r in conn.execute(sql)] for name, sql in {
-                "subjects":"SELECT * FROM subjects ORDER BY id", "topics":"SELECT * FROM topics ORDER BY subject_id,id",
-                "exams":"SELECT * FROM exams ORDER BY exam_date", "sessions":"SELECT * FROM study_sessions ORDER BY session_date,id"}.items()}
+            return {name: [dict(r) for r in conn.execute(sql)] for name, sql in {"subjects":"SELECT * FROM subjects ORDER BY id", "topics":"SELECT * FROM topics ORDER BY subject_id,id", "exams":"SELECT * FROM exams ORDER BY exam_date", "sessions":"SELECT * FROM study_sessions ORDER BY session_date,id"}.items()}
