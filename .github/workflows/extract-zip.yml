@@ -1,0 +1,64 @@
+name: Extract Zip File
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_file:
+        description: 'Path to zip file to extract (relative to repo root)'
+        required: true
+        default: 'Med-School-Study-Planner-v0.1.0.zip'
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Extract zip file
+        run: |
+          ZIP_FILE="${{ github.event.inputs.zip_file }}"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "Error: $ZIP_FILE not found"
+            exit 1
+          fi
+          
+          # Extract to a temp directory
+          unzip -q "$ZIP_FILE" -d temp_extract
+          
+          # Move contents from the nested folder to root
+          if [ -d "temp_extract/Med-School-Study-Planner" ]; then
+            # If there's a nested folder, move its contents to root
+            cp -r temp_extract/Med-School-Study-Planner/* .
+            rm -rf temp_extract
+          else
+            # Otherwise move all extracted files to root
+            cp -r temp_extract/* .
+            rm -rf temp_extract
+          fi
+          
+          echo "✓ Zip file extracted successfully"
+      
+      - name: Remove zip file
+        run: |
+          ZIP_FILE="${{ github.event.inputs.zip_file }}"
+          rm -f "$ZIP_FILE"
+          echo "✓ Removed $ZIP_FILE"
+      
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Commit and push changes
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          
+          git add -A
+          git commit -m "Extract Med-School-Study-Planner contents to root"
+          git push
+          echo "✓ Changes pushed to repository"
