@@ -13,15 +13,10 @@ except ImportError:  # pragma: no cover
 
 
 def _coverage_requirements(topics: list[Topic], exams: list[Exam], start: date, days: int) -> dict[str, tuple[date, int, str]]:
-    """Return topic -> (deadline, minimum 15-min blocks, exam id) for near-term exam coverage."""
     req: dict[str, tuple[date, int, str]] = {}
     horizon_end = start + timedelta(days=days - 1)
     for topic in topics:
-        candidates = [
-            e for e in exams
-            if e.date >= start and e.date <= horizon_end
-            and (topic.id in e.topic_ids or topic.subject_id in e.subject_ids)
-        ]
+        candidates = [e for e in exams if e.date >= start and e.date <= horizon_end and (topic.id in e.topic_ids or topic.subject_id in e.subject_ids)]
         if not candidates:
             continue
         exam = min(candidates, key=lambda e: (e.date, -e.weight))
@@ -39,34 +34,26 @@ def _coverage_gaps(topics: list[Topic], exams: list[Exam], sessions: list[StudyS
         return {}
     blocks: dict[str, int] = {tid: 0 for tid in coverage}
     for session in sessions:
-        if session.topic_id not in blocks:
+        if session.topic_id not in blocks or session.date > coverage[session.topic_id][0]:
             continue
-        deadline = coverage[session.topic_id][0]
-        if session.date <= deadline:
-            blocks[session.topic_id] += session.planned_minutes // 15
-    return {
-        f"{exam_id}:{topic_id}": max(0, required - blocks.get(topic_id, 0)) * 15
-        for topic_id, (_, required, exam_id) in coverage.items()
-        if max(0, required - blocks.get(topic_id, 0))
-    }
+        blocks[session.topic_id] += session.planned_minutes // 15
+    return {f"{exam_id}:{topic_id}": max(0, required - blocks.get(topic_id, 0)) * 15
+            for topic_id, (_, required, exam_id) in coverage.items()
+            if max(0, required - blocks.get(topic_id, 0))}
 
 
 def optimize_week(
-    subjects: list[Subject],
-    topics: list[Topic],
-    exams: list[Exam],
-    profile: UserProfile,
-    start: date,
-    days: int = 7,
-    weights: PriorityWeights = PriorityWeights(),
+    subjects: list[Subject], topics: list[Topic], exams: list[Exam], profile: UserProfile,
+    start: date, days: int = 7, weights: PriorityWeights = PriorityWeights(),
     blocked_minutes_by_day: dict[str, int] | None = None,
+    preallocated_subject_minutes: dict[str, int] | None = None,
 ) -> WeeklyPlan:
     """Tier-2 CP-SAT optimizer with daily caps, subject floors, exam coverage and locked capacity."""
     blocked_minutes_by_day = blocked_minutes_by_day or {}
+    preallocated_subject_minutes = preallocated_subject_minutes or {}
     if cp_model is None:
-        fallback = generate_balanced_week(subjects, topics, exams, profile, start, days, weights, blocked_minutes_by_day)
-        return WeeklyPlan(fallback.sessions, fallback.subject_minutes, fallback.unfulfilled_floor,
-                          _coverage_gaps(topics, exams, fallback.sessions, start, days))
+        fallback = generate_balanced_week(subjects, topics, exams, profile, start, days, weights, blocked_minutes_by_day, preallocated_subject_minutes)
+        return WeeklyPlan(fallback.sessions, fallback.subject_minutes, fallback.unfulfilled_floor, _coverage_gaps(topics, exams, fallback.sessions, start, days))
 
     active = [s for s in subjects if any(t.subject_id == s.id for t in topics)]
     if not active or days < 1:
@@ -100,16 +87,17 @@ def optimize_week(
             vars_[(topic.id, d)] = model.NewIntVar(0, min(capacity, target_blocks), f"q_{topic.id}_{d}")
 
     for d in range(days):
-        day_vars = [v for (tid, dd), v in vars_.items() if dd == d]
-        model.Add(sum(day_vars) <= day_capacity_blocks[d])
+        model.Add(sum(v for (tid, dd), v in vars_.items() if dd == d) <= day_capacity_blocks[d])
 
     requested_floor = profile.minimum_subject_minutes_week // quantum
-    feasible_floor = min(requested_floor, total_capacity // max(1, len(active)))
-    floor_blocks = {s.id: feasible_floor for s in active}
+    floor_blocks = {s.id: max(0, math.ceil((profile.minimum_subject_minutes_week - preallocated_subject_minutes.get(s.id, 0)) / quantum)) for s in active}
+    feasible_floor_total = total_capacity // max(1, len(active))
     for subject in active:
+        floor = min(floor_blocks[subject.id], feasible_floor_total)
+        floor_blocks[subject.id] = floor
         subject_vars = [v for (tid, _), v in vars_.items() if topic_map[tid].subject_id == subject.id]
-        if subject_vars and feasible_floor:
-            model.Add(sum(subject_vars) >= feasible_floor)
+        if subject_vars and floor:
+            model.Add(sum(subject_vars) >= floor)
 
     coverage = _coverage_requirements(topics, exams, start, days)
     for topic_id, (deadline, required, _) in coverage.items():
@@ -133,9 +121,8 @@ def optimize_week(
     solver.parameters.num_search_workers = 4
     status = solver.Solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        fallback = generate_balanced_week(subjects, topics, exams, profile, start, days, weights, blocked_minutes_by_day)
-        return WeeklyPlan(fallback.sessions, fallback.subject_minutes, fallback.unfulfilled_floor,
-                          _coverage_gaps(topics, exams, fallback.sessions, start, days))
+        fallback = generate_balanced_week(subjects, topics, exams, profile, start, days, weights, blocked_minutes_by_day, preallocated_subject_minutes)
+        return WeeklyPlan(fallback.sessions, fallback.subject_minutes, fallback.unfulfilled_floor, _coverage_gaps(topics, exams, fallback.sessions, start, days))
 
     sessions: list[StudySession] = []
     minutes_by_subject = {s.id: 0 for s in active}
@@ -147,16 +134,13 @@ def optimize_week(
         day = start + timedelta(days=d)
         topic = topic_map[topic_id]
         minutes = blocks * quantum
-        sessions.append(StudySession(day, topic_id, minutes,
-                                     session_type=SessionType.REVIEW if topic.next_review_due and topic.next_review_due <= day else SessionType.NEW))
+        sessions.append(StudySession(day, topic_id, minutes, session_type=SessionType.REVIEW if topic.next_review_due and topic.next_review_due <= day else SessionType.NEW))
         minutes_by_subject[topic.subject_id] += minutes
         if topic_id in covered_blocks:
             covered_blocks[topic_id] += blocks
 
     missing = {sid: max(0, floor_blocks[sid] * quantum - minutes_by_subject[sid]) for sid in floor_blocks}
-    exam_gaps = {
-        f"{exam_id}:{topic_id}": max(0, required - covered_blocks.get(topic_id, 0)) * quantum
-        for topic_id, (_, required, exam_id) in coverage.items()
-        if max(0, required - covered_blocks.get(topic_id, 0))
-    }
+    exam_gaps = {f"{exam_id}:{topic_id}": max(0, required - covered_blocks.get(topic_id, 0)) * quantum
+                 for topic_id, (_, required, exam_id) in coverage.items()
+                 if max(0, required - covered_blocks.get(topic_id, 0))}
     return WeeklyPlan(sorted(sessions, key=lambda s: (s.date, s.topic_id)), minutes_by_subject, missing, exam_gaps)
