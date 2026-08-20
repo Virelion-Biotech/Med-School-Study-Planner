@@ -1,22 +1,27 @@
 from __future__ import annotations
 
+import csv
+import io
 import os
 from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .adaptation import update_topic_from_session
+from .adaptation import recalibrated_complexity, update_topic_from_session
+from .analytics import summarize, topic_time_history
+from .export import sessions_csv, snapshot_json
+from .memory import next_memory_state
 from .models import Exam, PriorityWeights, Subject, Topic, UserProfile
 from .optimizer import optimize_week
 from .storage import StudyDB
 from .weekly import generate_balanced_week
 
-app = FastAPI(title="Med School Study Planner", version="0.5.0")
+app = FastAPI(title="Med School Study Planner", version="0.6.0")
 db = StudyDB(os.getenv("STUDY_PLANNER_DB", "study_planner.db"))
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -87,7 +92,7 @@ def root():
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "engine": "tiered-rule-based-cpsat", "ui": "available", "version": "0.5.0"}
+    return {"status": "ok", "engine": "adaptive-tiered-optimizer", "ui": "available", "version": "0.6.0"}
 
 @app.get("/profile")
 def get_profile():
@@ -105,11 +110,8 @@ def update_profile(request: ProfileRequest):
 
 @app.post("/subjects")
 def create_subject(request: SubjectRequest):
-    try:
-        db.upsert_subject(Subject(request.id, request.name, request.exam_weight, request.category))
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"status": "saved", "subject": asdict(Subject(request.id, request.name, request.exam_weight, request.category))}
+    db.upsert_subject(Subject(request.id, request.name, request.exam_weight, request.category))
+    return {"status": "saved", "subject": request.model_dump()}
 
 @app.delete("/subjects/{subject_id}")
 def remove_subject(subject_id: str):
@@ -182,13 +184,15 @@ def complete(session_id: int, request: CompleteRequest):
     if topic is None:
         raise HTTPException(status_code=404, detail="Session or topic not found")
     completed_on = request.completed_on or date.today()
-    updated = update_topic_from_session(topic, request.actual_minutes, request.performance_score, completed_on)
+    memory = db.get_memory_state(topic.id)
+    updated, new_memory = update_topic_from_session(topic, request.actual_minutes, request.performance_score, completed_on, memory)
     try:
         db.complete_session(session_id, request.actual_minutes, request.performance_score)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     db.update_topic(updated)
-    return {"topic": asdict(updated)}
+    db.save_memory_state(topic.id, new_memory)
+    return {"topic": asdict(updated), "memory": asdict(new_memory)}
 
 @app.post("/sessions/{session_id}/reschedule")
 def reschedule(session_id: int, request: RescheduleRequest):
@@ -209,14 +213,44 @@ def replan(request: ReplanRequest):
     profile = db.get_profile()
     if not subjects or not topics:
         raise HTTPException(status_code=409, detail="No saved curriculum to replan")
-    result = (optimize_week if request.optimizer else generate_balanced_week)(subjects, topics, exams, profile,
-                                                                                request.start_date, request.days, request.weights)
+    result = (optimize_week if request.optimizer else generate_balanced_week)(subjects, topics, exams, profile, request.start_date, request.days, request.weights)
     end = request.start_date + timedelta(days=request.days)
     db.delete_uncompleted_sessions_in_range(request.start_date, end, set(request.locked_session_ids))
-    db.save_sessions(result.sessions)
-    return {"sessions": [asdict(s) | {"session_type": s.session_type.value} for s in result.sessions],
-            "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor,
+    ids = db.save_sessions(result.sessions)
+    sessions = [asdict(s) | {"session_type": s.session_type.value, "session_id": ids[i]} for i, s in enumerate(result.sessions)]
+    return {"sessions": sessions, "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor,
             "optimizer": request.optimizer, "locked_session_ids": request.locked_session_ids}
+
+@app.get("/analytics")
+def analytics():
+    return asdict(summarize(db.snapshot())) | {"topic_time_history": topic_time_history(db.snapshot())}
+
+@app.get("/memory/{topic_id}")
+def memory(topic_id: str):
+    return asdict(db.get_memory_state(topic_id))
+
+@app.post("/calibrate")
+def calibrate():
+    snap = db.snapshot()
+    histories = topic_time_history(snap)
+    changed = []
+    for topic in db.load_curriculum()[1]:
+        history = histories.get(topic.id, [])
+        if len(history) >= 2:
+            recalibrated = recalibrated_complexity(topic, history)
+            if abs(recalibrated - topic.complexity) >= 0.02:
+                topic.complexity = recalibrated
+                db.update_topic(topic)
+                changed.append({"topic_id": topic.id, "complexity": recalibrated})
+    return {"updated": changed, "count": len(changed)}
+
+@app.get("/export/snapshot.json", response_class=PlainTextResponse)
+def export_snapshot():
+    return snapshot_json(db.snapshot())
+
+@app.get("/export/sessions.csv", response_class=PlainTextResponse)
+def export_sessions():
+    return sessions_csv(db.snapshot())
 
 @app.get("/snapshot")
 def snapshot():
