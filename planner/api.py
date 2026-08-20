@@ -16,7 +16,7 @@ from .optimizer import optimize_week
 from .storage import StudyDB
 from .weekly import generate_balanced_week
 
-app = FastAPI(title="Med School Study Planner", version="0.4.0")
+app = FastAPI(title="Med School Study Planner", version="0.5.0")
 db = StudyDB(os.getenv("STUDY_PLANNER_DB", "study_planner.db"))
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -29,7 +29,7 @@ class PlanRequest(BaseModel):
     start_date: date
     days: int = Field(default=7, ge=1, le=31)
     weights: PriorityWeights = PriorityWeights()
-    optimizer: bool = False
+    optimizer: bool = True
     persist: bool = False
 
 class CompleteRequest(BaseModel):
@@ -47,17 +47,113 @@ class ReplanRequest(BaseModel):
     optimizer: bool = True
     locked_session_ids: list[int] = Field(default_factory=list)
 
+class SubjectRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=200)
+    exam_weight: float = Field(default=1.0, ge=0)
+    category: str = Field(default="general", max_length=100)
+
+class TopicRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+    subject_id: str
+    name: str = Field(min_length=1, max_length=200)
+    complexity: float = Field(default=0.5, ge=0, le=1)
+    estimated_hours: float = Field(default=1.0, gt=0, le=100)
+    mastery: float = Field(default=0, ge=0, le=1)
+    self_difficulty: float = Field(default=3, ge=1, le=5)
+    volume: float = Field(default=0.5, ge=0, le=1)
+    cognitive_load: float = Field(default=0.5, ge=0, le=1)
+    last_studied: date | None = None
+    next_review_due: date | None = None
+
+class ExamRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    date: date
+    subject_ids: list[str] = Field(default_factory=list)
+    topic_ids: list[str] = Field(default_factory=list)
+    weight: float = Field(default=1.0, ge=0)
+
+class ProfileRequest(BaseModel):
+    daily_available_minutes: int = Field(default=240, ge=30, le=1440)
+    minimum_subject_minutes_week: int = Field(default=60, ge=0, le=10080)
+    review_fraction: float = Field(default=0.25, ge=0, le=1)
+    max_session_minutes: int = Field(default=60, ge=15, le=240)
+    rest_weekdays: list[int] = Field(default_factory=list)
+    energy_pattern: list[str] = Field(default_factory=lambda: ["high", "medium", "medium", "low"])
+
 @app.get("/", include_in_schema=False)
 def root():
     return FileResponse(STATIC_DIR / "index.html")
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "engine": "tiered-rule-based-cpsat", "ui": "available"}
+    return {"status": "ok", "engine": "tiered-rule-based-cpsat", "ui": "available", "version": "0.5.0"}
 
+@app.get("/profile")
+def get_profile():
+    return asdict(db.get_profile())
 
-def _serialize_plan(result):
-    return [asdict(s) | {"session_type": s.session_type.value} for s in result.sessions]
+@app.put("/profile")
+def update_profile(request: ProfileRequest):
+    if any(day < 0 or day > 6 for day in request.rest_weekdays):
+        raise HTTPException(status_code=422, detail="rest_weekdays values must be 0..6")
+    profile = UserProfile(request.daily_available_minutes, request.minimum_subject_minutes_week,
+                          request.review_fraction, request.max_session_minutes,
+                          tuple(sorted(set(request.rest_weekdays))), tuple(request.energy_pattern))
+    db.save_profile(profile)
+    return asdict(profile)
+
+@app.post("/subjects")
+def create_subject(request: SubjectRequest):
+    try:
+        db.upsert_subject(Subject(request.id, request.name, request.exam_weight, request.category))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "saved", "subject": asdict(Subject(request.id, request.name, request.exam_weight, request.category))}
+
+@app.delete("/subjects/{subject_id}")
+def remove_subject(subject_id: str):
+    try:
+        db.delete_subject(subject_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Subject not found") from exc
+    return {"status": "deleted", "id": subject_id}
+
+@app.post("/topics")
+def create_topic(request: TopicRequest):
+    topic = Topic(request.id, request.subject_id, request.name, request.complexity, request.estimated_hours,
+                  request.mastery, request.last_studied, request.next_review_due,
+                  request.self_difficulty, request.volume, request.cognitive_load)
+    try:
+        db.upsert_topic(topic)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "saved", "topic": asdict(topic)}
+
+@app.delete("/topics/{topic_id}")
+def remove_topic(topic_id: str):
+    try:
+        db.delete_topic(topic_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Topic not found") from exc
+    return {"status": "deleted", "id": topic_id}
+
+@app.post("/exams")
+def create_exam(request: ExamRequest):
+    exam = Exam(request.id, request.date, tuple(dict.fromkeys(request.subject_ids)), tuple(dict.fromkeys(request.topic_ids)), request.weight)
+    try:
+        db.upsert_exam(exam)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "saved", "exam": asdict(exam)}
+
+@app.delete("/exams/{exam_id}")
+def remove_exam(exam_id: str):
+    try:
+        db.delete_exam(exam_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Exam not found") from exc
+    return {"status": "deleted", "id": exam_id}
 
 @app.post("/plan")
 def plan(request: PlanRequest):
@@ -113,16 +209,14 @@ def replan(request: ReplanRequest):
     profile = db.get_profile()
     if not subjects or not topics:
         raise HTTPException(status_code=409, detail="No saved curriculum to replan")
-    result = (optimize_week if request.optimizer else generate_balanced_week)(
-        subjects, topics, exams, profile, request.start_date, request.days, request.weights,
-    )
+    result = (optimize_week if request.optimizer else generate_balanced_week)(subjects, topics, exams, profile,
+                                                                                request.start_date, request.days, request.weights)
     end = request.start_date + timedelta(days=request.days)
-    # Preserve sessions explicitly moved by the user; rebuild the remaining uncompleted schedule.
     db.delete_uncompleted_sessions_in_range(request.start_date, end, set(request.locked_session_ids))
     db.save_sessions(result.sessions)
-    return {"sessions": _serialize_plan(result), "subject_minutes": result.subject_minutes,
-            "unfulfilled_floor": result.unfulfilled_floor, "optimizer": request.optimizer,
-            "locked_session_ids": request.locked_session_ids}
+    return {"sessions": [asdict(s) | {"session_type": s.session_type.value} for s in result.sessions],
+            "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor,
+            "optimizer": request.optimizer, "locked_session_ids": request.locked_session_ids}
 
 @app.get("/snapshot")
 def snapshot():
