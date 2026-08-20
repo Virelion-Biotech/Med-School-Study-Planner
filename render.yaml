@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: med-school-study-planner-api
+    runtime: python
+    plan: starter
+    buildCommand: pip install -e '.[all]'
+    startCommand: uvicorn planner.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: STUDY_PLANNER_DB
+        value: /data/study_planner.db
+      - key: CORS_ORIGINS
+        value: https://virelion-biotech.github.io
+    disk:
+      name: planner-data
+      mountPath: /data
+      sizeGB: 1
