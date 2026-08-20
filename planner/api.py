@@ -3,8 +3,11 @@ from __future__ import annotations
 import os
 from dataclasses import asdict
 from datetime import date
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .adaptation import update_topic_from_session
@@ -13,8 +16,10 @@ from .optimizer import optimize_week
 from .storage import StudyDB
 from .weekly import generate_balanced_week
 
-app = FastAPI(title="Med School Study Planner", version="0.2.0")
+app = FastAPI(title="Med School Study Planner", version="0.3.0")
 db = StudyDB(os.getenv("STUDY_PLANNER_DB", "study_planner.db"))
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 class PlanRequest(BaseModel):
     subjects: list[Subject]
@@ -32,9 +37,13 @@ class CompleteRequest(BaseModel):
     performance_score: float = Field(ge=0, le=1)
     completed_on: date | None = None
 
+@app.get("/", include_in_schema=False)
+def root():
+    return FileResponse(STATIC_DIR / "index.html")
+
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "engine": "tiered-rule-based-cpsat"}
+    return {"status": "ok", "engine": "tiered-rule-based-cpsat", "ui": "available"}
 
 @app.post("/plan")
 def plan(request: PlanRequest):
