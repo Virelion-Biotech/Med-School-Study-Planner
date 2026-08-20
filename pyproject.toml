@@ -1,7 +1,7 @@
 [project]
 name = "med-school-study-planner"
-version = "0.2.0"
-description = "Complexity-aware, balanced medical study scheduling engine"
+version = "0.4.0"
+description = "Complexity-aware, fairness-constrained medical study scheduling engine with adaptive UI"
 requires-python = ">=3.11"
 dependencies = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1", "pydantic>=2.8,<3"]
 
