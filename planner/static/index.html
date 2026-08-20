@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Med School Study Planner</title>
-  <link rel="stylesheet" href="/static/styles.css" />
-  <link rel="stylesheet" href="/static/admin.css" />
+  <link rel="stylesheet" href="/Med-School-Study-Planner/static/styles.css" />
+  <link rel="stylesheet" href="/Med-School-Study-Planner/static/admin.css" />
 </head>
 <body>
   <div class="app-shell">
@@ -18,7 +18,7 @@
         <button class="nav-item" data-view="exams">Exams</button>
         <button class="nav-item" data-view="insights">Insights</button>
       </nav>
-      <div class="sidebar-foot"><span class="status-dot"></span><span id="engine-status">Engine connected</span></div>
+      <div class="sidebar-foot"><span class="status-dot"></span><span id="engine-status">Connecting…</span></div>
     </aside>
     <main class="main">
       <header class="topbar">
@@ -38,9 +38,10 @@
     </div>
   </div>
   <div id="toast" class="toast" role="status"></div>
-  <script src="/static/app.js" defer></script>
-  <script src="/static/admin.js" defer></script>
-  <script src="/static/bridge.js" defer></script>
-  <script src="/static/finalize.js" defer></script>
+  <script src="/Med-School-Study-Planner/static/api-config.js"></script>
+  <script src="/Med-School-Study-Planner/static/app.js" defer></script>
+  <script src="/Med-School-Study-Planner/static/admin.js" defer></script>
+  <script src="/Med-School-Study-Planner/static/bridge.js" defer></script>
+  <script src="/Med-School-Study-Planner/static/finalize.js" defer></script>
 </body>
 </html>
