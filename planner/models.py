@@ -102,6 +102,11 @@ def review_due_score(today: date, due: date | None) -> float:
     return clamp(1.0 / (1.0 + abs(days) / 7.0))
 
 
+def subject_blueprint_weight(subject: Subject) -> float:
+    """Normalize either legacy 0..1 weights or percentage-style blueprint weights."""
+    return clamp(subject.exam_weight if subject.exam_weight <= 1 else subject.exam_weight / 16.0)
+
+
 def topic_priority(topic: Topic, subject: Subject, today: date, exam: Exam | None,
                    weights: PriorityWeights = PriorityWeights()) -> float:
     exam_date = exam.date if exam else None
@@ -110,7 +115,7 @@ def topic_priority(topic: Topic, subject: Subject, today: date, exam: Exam | Non
         weights.urgency * urgency_score(today, exam_date)
         + weights.complexity * complexity_score(topic)
         + weights.mastery_gap * (1.0 - clamp(topic.mastery))
-        + weights.exam_weight * clamp(subject.exam_weight) * tested
+        + weights.exam_weight * subject_blueprint_weight(subject) * tested
         + weights.review_due * review_due_score(today, topic.next_review_due)
     )
 
