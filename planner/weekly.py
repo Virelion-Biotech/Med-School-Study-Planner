@@ -26,17 +26,14 @@ def _review_fraction(profile: UserProfile, day: date, exams: list[Exam]) -> floa
 
 
 def generate_balanced_week(
-    subjects: list[Subject],
-    topics: list[Topic],
-    exams: list[Exam],
-    profile: UserProfile,
-    start: date,
-    days: int = 7,
-    weights: PriorityWeights = PriorityWeights(),
+    subjects: list[Subject], topics: list[Topic], exams: list[Exam], profile: UserProfile,
+    start: date, days: int = 7, weights: PriorityWeights = PriorityWeights(),
     blocked_minutes_by_day: dict[str, int] | None = None,
+    preallocated_subject_minutes: dict[str, int] | None = None,
 ) -> WeeklyPlan:
     """Generate a week while respecting weekly floors and already locked sessions."""
     blocked_minutes_by_day = blocked_minutes_by_day or {}
+    preallocated_subject_minutes = preallocated_subject_minutes or {}
     if days < 1:
         return WeeklyPlan([], {}, {})
     active = _active_subjects(subjects, topics, exams, start)
@@ -52,7 +49,10 @@ def generate_balanced_week(
     requested_floor = profile.minimum_subject_minutes_week
     total_floor = requested_floor * len(active)
     floor_scale = min(1.0, capacity / total_floor) if total_floor else 1.0
-    floor_target = {s.id: round(requested_floor * floor_scale) for s in active}
+    floor_target = {
+        s.id: round(max(0, requested_floor - preallocated_subject_minutes.get(s.id, 0)) * floor_scale)
+        for s in active
+    }
     floor_debt = dict(floor_target)
     subject_minutes = defaultdict(int)
     sessions: list[StudySession] = []
