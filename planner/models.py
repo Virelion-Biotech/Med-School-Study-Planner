@@ -39,7 +39,7 @@ class Topic:
 class Exam:
     id: str
     date: date
-    subject_ids: tuple[str, ...]
+    subject_ids: tuple[str, ...] = ()
     topic_ids: tuple[str, ...] = ()
     weight: float = 1.0
 
@@ -78,7 +78,6 @@ def clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
 
 
 def complexity_score(topic: Topic) -> float:
-    """Initial complexity estimate; historical learning data can replace inputs later."""
     difficulty = clamp((topic.self_difficulty - 1) / 4)
     return clamp(0.30 * topic.volume + 0.30 * topic.cognitive_load + 0.40 * difficulty)
 
@@ -89,7 +88,6 @@ def urgency_score(today: date, exam_date: date | None) -> float:
     days = (exam_date - today).days
     if days <= 0:
         return 1.0
-    # Smooth urgency curve: meaningful early, aggressive inside two weeks.
     return clamp(1.0 / (1.0 + days / 14.0))
 
 
