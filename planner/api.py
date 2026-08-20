@@ -207,14 +207,18 @@ def replan(request: ReplanRequest):
     profile = db.get_profile()
     if not subjects or not topics:
         raise HTTPException(status_code=409, detail="No saved curriculum to replan")
+    snap = db.snapshot()
+    locked = {int(row["id"]): row for row in snap["sessions"] if int(row["id"]) in set(request.locked_session_ids)}
+    locked_keys = {(row["session_date"], row["topic_id"]) for row in locked.values()}
     result = (optimize_week if request.optimizer else generate_balanced_week)(subjects, topics, exams, profile, request.start_date, request.days, request.weights)
     end = request.start_date + timedelta(days=request.days)
-    db.delete_uncompleted_sessions_in_range(request.start_date, end, set(request.locked_session_ids))
-    ids = db.save_sessions(result.sessions)
-    sessions = [asdict(s) | {"session_type": s.session_type.value, "session_id": ids[i]} for i, s in enumerate(result.sessions)]
+    db.delete_uncompleted_sessions_in_range(request.start_date, end, set(locked))
+    filtered = [s for s in result.sessions if (s.date.isoformat(), s.topic_id) not in locked_keys]
+    ids = db.save_sessions(filtered)
+    sessions = [asdict(s) | {"session_type": s.session_type.value, "session_id": ids[i]} for i, s in enumerate(filtered)]
     return {"sessions": sessions, "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor,
             "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage, "optimizer": request.optimizer,
-            "locked_session_ids": request.locked_session_ids}
+            "locked_session_ids": sorted(locked)}
 
 @app.get("/analytics")
 def analytics():
