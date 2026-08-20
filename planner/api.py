@@ -249,17 +249,21 @@ def replan(request: ReplanRequest):
     blocked: dict[str, int] = {}
     locked_keys: set[tuple[str, str]] = set()
     locked_subject_minutes: dict[str, int] = {}
+    locked_topic_minutes: dict[str, int] = {}
     subject_by_topic = {t.id: t.subject_id for t in topics}
     for row in locked.values():
         day = row["session_date"]
-        blocked[day] = blocked.get(day, 0) + int(row["planned_minutes"])
+        minutes = int(row["planned_minutes"])
+        blocked[day] = blocked.get(day, 0) + minutes
         locked_keys.add((day, row["topic_id"]))
+        locked_topic_minutes[row["topic_id"]] = locked_topic_minutes.get(row["topic_id"], 0) + minutes
         sid = subject_by_topic.get(row["topic_id"])
         if sid:
-            locked_subject_minutes[sid] = locked_subject_minutes.get(sid, 0) + int(row["planned_minutes"])
-    result = (optimize_week if request.optimizer else generate_balanced_week)(
-        subjects, topics, exams, profile, request.start_date, request.days, request.weights, blocked, locked_subject_minutes,
-    )
+            locked_subject_minutes[sid] = locked_subject_minutes.get(sid, 0) + minutes
+    if request.optimizer:
+        result = optimize_week(subjects, topics, exams, profile, request.start_date, request.days, request.weights, blocked, locked_subject_minutes, locked_topic_minutes)
+    else:
+        result = generate_balanced_week(subjects, topics, exams, profile, request.start_date, request.days, request.weights, blocked, locked_subject_minutes)
     end = request.start_date + timedelta(days=request.days)
     db.delete_uncompleted_sessions_in_range(request.start_date, end, set(locked))
     filtered = [s for s in result.sessions if (s.date.isoformat(), s.topic_id) not in locked_keys]
