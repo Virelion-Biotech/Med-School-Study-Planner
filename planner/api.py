@@ -161,10 +161,7 @@ def remove_exam(exam_id: str):
 
 @app.post("/plan")
 def plan(request: PlanRequest):
-    result = (optimize_week if request.optimizer else generate_balanced_week)(
-        request.subjects, request.topics, request.exams, request.profile,
-        request.start_date, request.days, request.weights,
-    )
+    result = (optimize_week if request.optimizer else generate_balanced_week)(request.subjects, request.topics, request.exams, request.profile, request.start_date, request.days, request.weights)
     session_ids: list[int] = []
     if request.persist:
         db.save_profile(request.profile)
@@ -245,10 +242,13 @@ def replan(request: ReplanRequest):
     if completed:
         raise HTTPException(status_code=409, detail=f"Completed session(s) cannot be locked: {sorted(completed)}")
     horizon_end = request.start_date + timedelta(days=request.days)
-    locked = {sid: row for sid, row in rows_by_id.items() if sid in requested and request.start_date <= date.fromisoformat(row["session_date"]) < horizon_end}
-    blocked = {}
-    locked_keys = set()
-    locked_subject_minutes = {}
+    outside = {sid for sid in requested if not (request.start_date <= date.fromisoformat(rows_by_id[sid]["session_date"]) < horizon_end)}
+    if outside:
+        raise HTTPException(status_code=409, detail=f"Locked session(s) must be inside the replanning horizon: {sorted(outside)}")
+    locked = {sid: rows_by_id[sid] for sid in requested}
+    blocked: dict[str, int] = {}
+    locked_keys: set[tuple[str, str]] = set()
+    locked_subject_minutes: dict[str, int] = {}
     subject_by_topic = {t.id: t.subject_id for t in topics}
     for row in locked.values():
         day = row["session_date"]
@@ -258,7 +258,7 @@ def replan(request: ReplanRequest):
         if sid:
             locked_subject_minutes[sid] = locked_subject_minutes.get(sid, 0) + int(row["planned_minutes"])
     result = (optimize_week if request.optimizer else generate_balanced_week)(
-        subjects, topics, exams, profile, request.start_date, request.days, request.weights, blocked,
+        subjects, topics, exams, profile, request.start_date, request.days, request.weights, blocked, locked_subject_minutes,
     )
     end = request.start_date + timedelta(days=request.days)
     db.delete_uncompleted_sessions_in_range(request.start_date, end, set(locked))
