@@ -76,19 +76,59 @@ class StudyDB:
                            row["max_session_minutes"], tuple(json.loads(row["rest_weekdays_json"])),
                            tuple(json.loads(row["energy_pattern_json"])))
 
-    def save_curriculum(self, subjects: list[Subject], topics: list[Topic], exams: list[Exam]) -> None:
+    def upsert_subject(self, subject: Subject) -> None:
         with self.connection() as conn:
-            for s in subjects:
-                conn.execute("INSERT OR REPLACE INTO subjects VALUES (?, ?, ?, ?)", (s.id, s.name, s.exam_weight, s.category))
-            for t in topics:
-                conn.execute("INSERT OR REPLACE INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (t.id, t.subject_id, t.name, t.complexity, t.estimated_hours, t.mastery,
-                     t.last_studied.isoformat() if t.last_studied else None,
-                     t.next_review_due.isoformat() if t.next_review_due else None,
-                     t.self_difficulty, t.volume, t.cognitive_load))
-            for e in exams:
-                conn.execute("INSERT OR REPLACE INTO exams VALUES (?, ?, ?, ?, ?)",
-                    (e.id, e.date.isoformat(), json.dumps(e.subject_ids), json.dumps(e.topic_ids), e.weight))
+            conn.execute("INSERT INTO subjects VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, exam_weight=excluded.exam_weight, category=excluded.category",
+                         (subject.id, subject.name, subject.exam_weight, subject.category))
+
+    def delete_subject(self, subject_id: str) -> None:
+        with self.connection() as conn:
+            if conn.execute("SELECT 1 FROM subjects WHERE id=?", (subject_id,)).fetchone() is None:
+                raise KeyError(subject_id)
+            conn.execute("DELETE FROM subjects WHERE id=?", (subject_id,))
+
+    def upsert_topic(self, topic: Topic) -> None:
+        with self.connection() as conn:
+            if conn.execute("SELECT 1 FROM subjects WHERE id=?", (topic.subject_id,)).fetchone() is None:
+                raise ValueError("subject does not exist")
+            conn.execute("""INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET subject_id=excluded.subject_id,name=excluded.name,complexity=excluded.complexity,
+            estimated_hours=excluded.estimated_hours,mastery=excluded.mastery,last_studied=excluded.last_studied,
+            next_review_due=excluded.next_review_due,self_difficulty=excluded.self_difficulty,volume=excluded.volume,
+            cognitive_load=excluded.cognitive_load""",
+            (topic.id, topic.subject_id, topic.name, topic.complexity, topic.estimated_hours, topic.mastery,
+             topic.last_studied.isoformat() if topic.last_studied else None,
+             topic.next_review_due.isoformat() if topic.next_review_due else None,
+             topic.self_difficulty, topic.volume, topic.cognitive_load))
+
+    def delete_topic(self, topic_id: str) -> None:
+        with self.connection() as conn:
+            if conn.execute("SELECT 1 FROM topics WHERE id=?", (topic_id,)).fetchone() is None:
+                raise KeyError(topic_id)
+            conn.execute("DELETE FROM topics WHERE id=?", (topic_id,))
+
+    def upsert_exam(self, exam: Exam) -> None:
+        with self.connection() as conn:
+            missing_subjects = [s for s in exam.subject_ids if conn.execute("SELECT 1 FROM subjects WHERE id=?", (s,)).fetchone() is None]
+            missing_topics = [t for t in exam.topic_ids if conn.execute("SELECT 1 FROM topics WHERE id=?", (t,)).fetchone() is None]
+            if missing_subjects or missing_topics:
+                raise ValueError("exam coverage contains unknown subject/topic ids")
+            conn.execute("INSERT INTO exams VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET exam_date=excluded.exam_date,subject_ids_json=excluded.subject_ids_json,topic_ids_json=excluded.topic_ids_json,weight=excluded.weight",
+                         (exam.id, exam.date.isoformat(), json.dumps(exam.subject_ids), json.dumps(exam.topic_ids), exam.weight))
+
+    def delete_exam(self, exam_id: str) -> None:
+        with self.connection() as conn:
+            if conn.execute("SELECT 1 FROM exams WHERE id=?", (exam_id,)).fetchone() is None:
+                raise KeyError(exam_id)
+            conn.execute("DELETE FROM exams WHERE id=?", (exam_id,))
+
+    def save_curriculum(self, subjects: list[Subject], topics: list[Topic], exams: list[Exam]) -> None:
+        for subject in subjects:
+            self.upsert_subject(subject)
+        for topic in topics:
+            self.upsert_topic(topic)
+        for exam in exams:
+            self.upsert_exam(exam)
 
     def load_curriculum(self) -> tuple[list[Subject], list[Topic], list[Exam]]:
         snap = self.snapshot()
@@ -117,8 +157,7 @@ class StudyDB:
         with self.connection() as conn:
             if preserve_ids:
                 placeholders = ",".join("?" for _ in preserve_ids)
-                params: list[object] = [start.isoformat(), end.isoformat(), *sorted(preserve_ids)]
-                conn.execute(f"DELETE FROM study_sessions WHERE completed=0 AND session_date>=? AND session_date<? AND id NOT IN ({placeholders})", params)
+                conn.execute(f"DELETE FROM study_sessions WHERE completed=0 AND session_date>=? AND session_date<? AND id NOT IN ({placeholders})", [start.isoformat(), end.isoformat(), *sorted(preserve_ids)])
             else:
                 conn.execute("DELETE FROM study_sessions WHERE completed=0 AND session_date>=? AND session_date<?", (start.isoformat(), end.isoformat()))
 
@@ -144,8 +183,7 @@ class StudyDB:
         return self._topic_from_row(row) if row else None
 
     def update_topic(self, topic: Topic) -> None:
-        with self.connection() as conn:
-            conn.execute("UPDATE topics SET complexity=?, estimated_hours=?, mastery=?, last_studied=?, next_review_due=?, self_difficulty=?, volume=?, cognitive_load=? WHERE id=?", (topic.complexity, topic.estimated_hours, topic.mastery, topic.last_studied.isoformat() if topic.last_studied else None, topic.next_review_due.isoformat() if topic.next_review_due else None, topic.self_difficulty, topic.volume, topic.cognitive_load, topic.id))
+        self.upsert_topic(topic)
 
     def weekly_completed_minutes(self, week_start: date, subject_id: str) -> int:
         week_end = week_start + timedelta(days=7)
