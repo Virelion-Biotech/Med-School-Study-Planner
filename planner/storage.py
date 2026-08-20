@@ -73,8 +73,7 @@ class StudyDB:
     def save_curriculum(self, subjects: list[Subject], topics: list[Topic], exams: list[Exam]) -> None:
         with self.connection() as conn:
             for s in subjects:
-                conn.execute("INSERT OR REPLACE INTO subjects VALUES (?, ?, ?, ?)",
-                             (s.id, s.name, s.exam_weight, s.category))
+                conn.execute("INSERT OR REPLACE INTO subjects VALUES (?, ?, ?, ?)", (s.id, s.name, s.exam_weight, s.category))
             for t in topics:
                 conn.execute("INSERT OR REPLACE INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                              (t.id, t.subject_id, t.name, t.complexity, t.estimated_hours, t.mastery,
@@ -85,13 +84,16 @@ class StudyDB:
                 conn.execute("INSERT OR REPLACE INTO exams VALUES (?, ?, ?, ?, ?)",
                              (e.id, e.date.isoformat(), json.dumps(e.subject_ids), json.dumps(e.topic_ids), e.weight))
 
-    def save_sessions(self, sessions: list[StudySession]) -> None:
+    def save_sessions(self, sessions: list[StudySession]) -> list[int]:
+        ids: list[int] = []
         with self.connection() as conn:
             for s in sessions:
-                conn.execute(
+                cursor = conn.execute(
                     "INSERT INTO study_sessions (session_date, topic_id, planned_minutes, actual_minutes, session_type, performance_score) VALUES (?, ?, ?, ?, ?, ?)",
                     (s.date.isoformat(), s.topic_id, s.planned_minutes, s.actual_minutes, s.session_type.value, s.performance_score),
                 )
+                ids.append(int(cursor.lastrowid))
+        return ids
 
     def get_topic_for_session(self, session_id: int) -> Topic | None:
         with self.connection() as conn:
@@ -123,21 +125,17 @@ class StudyDB:
 
     def update_topic(self, topic: Topic) -> None:
         with self.connection() as conn:
-            conn.execute(
-                "UPDATE topics SET complexity=?, estimated_hours=?, mastery=?, last_studied=?, next_review_due=?, self_difficulty=?, volume=?, cognitive_load=? WHERE id=?",
-                (topic.complexity, topic.estimated_hours, topic.mastery,
-                 topic.last_studied.isoformat() if topic.last_studied else None,
-                 topic.next_review_due.isoformat() if topic.next_review_due else None,
-                 topic.self_difficulty, topic.volume, topic.cognitive_load, topic.id),
-            )
+            conn.execute("UPDATE topics SET complexity=?, estimated_hours=?, mastery=?, last_studied=?, next_review_due=?, self_difficulty=?, volume=?, cognitive_load=? WHERE id=?",
+                         (topic.complexity, topic.estimated_hours, topic.mastery,
+                          topic.last_studied.isoformat() if topic.last_studied else None,
+                          topic.next_review_due.isoformat() if topic.next_review_due else None,
+                          topic.self_difficulty, topic.volume, topic.cognitive_load, topic.id))
 
     def weekly_completed_minutes(self, week_start: date, subject_id: str) -> int:
         week_end = week_start + timedelta(days=7)
         with self.connection() as conn:
-            row = conn.execute(
-                "SELECT COALESCE(SUM(s.actual_minutes), 0) minutes FROM study_sessions s JOIN topics t ON t.id=s.topic_id WHERE s.completed=1 AND t.subject_id=? AND s.session_date>=? AND s.session_date<?",
-                (subject_id, week_start.isoformat(), week_end.isoformat()),
-            ).fetchone()
+            row = conn.execute("SELECT COALESCE(SUM(s.actual_minutes), 0) minutes FROM study_sessions s JOIN topics t ON t.id=s.topic_id WHERE s.completed=1 AND t.subject_id=? AND s.session_date>=? AND s.session_date<?",
+                               (subject_id, week_start.isoformat(), week_end.isoformat())).fetchone()
         return int(row["minutes"])
 
     def snapshot(self) -> dict:
