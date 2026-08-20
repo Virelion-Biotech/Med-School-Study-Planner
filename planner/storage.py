@@ -93,6 +93,9 @@ class StudyDB:
         with self.connection() as conn:
             if conn.execute("SELECT 1 FROM subjects WHERE id=?", (subject_id,)).fetchone() is None:
                 raise KeyError(subject_id)
+            exam_rows = conn.execute("SELECT id, subject_ids_json FROM exams").fetchall()
+            if any(subject_id in json.loads(row["subject_ids_json"] or "[]") for row in exam_rows):
+                raise ValueError("subject is referenced by an exam; remove that exam coverage first")
             conn.execute("DELETE FROM subjects WHERE id=?", (subject_id,))
 
     def upsert_topic(self, topic: Topic) -> None:
@@ -113,6 +116,9 @@ class StudyDB:
         with self.connection() as conn:
             if conn.execute("SELECT 1 FROM topics WHERE id=?", (topic_id,)).fetchone() is None:
                 raise KeyError(topic_id)
+            exam_rows = conn.execute("SELECT id, topic_ids_json FROM exams").fetchall()
+            if any(topic_id in json.loads(row["topic_ids_json"] or "[]") for row in exam_rows):
+                raise ValueError("topic is referenced by an exam; remove that exam coverage first")
             conn.execute("DELETE FROM topics WHERE id=?", (topic_id,))
 
     def upsert_exam(self, exam: Exam) -> None:
@@ -178,8 +184,13 @@ class StudyDB:
         if actual_minutes < 0 or not 0 <= performance_score <= 1:
             raise ValueError("actual_minutes must be >= 0 and performance_score must be in [0, 1]")
         with self.connection() as conn:
-            n = conn.execute("UPDATE study_sessions SET actual_minutes=?, performance_score=?, completed=1 WHERE id=?", (actual_minutes, performance_score, session_id)).rowcount
-        if n != 1: raise KeyError(f"session {session_id} not found")
+            n = conn.execute("UPDATE study_sessions SET actual_minutes=?, performance_score=?, completed=1 WHERE id=? AND completed=0", (actual_minutes, performance_score, session_id)).rowcount
+        if n != 1:
+            with self.connection() as conn:
+                exists = conn.execute("SELECT completed FROM study_sessions WHERE id=?", (session_id,)).fetchone()
+            if exists is None:
+                raise KeyError(f"session {session_id} not found")
+            raise ValueError(f"session {session_id} is already completed")
 
     def get_memory_state(self, topic_id: str) -> MemoryState:
         with self.connection() as conn:
@@ -216,4 +227,10 @@ class StudyDB:
 
     def snapshot(self) -> dict:
         with self.connection() as conn:
-            return {name: [dict(r) for r in conn.execute(sql)] for name, sql in {"subjects":"SELECT * FROM subjects ORDER BY id", "topics":"SELECT * FROM topics ORDER BY subject_id,id", "exams":"SELECT * FROM exams ORDER BY exam_date", "sessions":"SELECT * FROM study_sessions ORDER BY session_date,id"}.items()}
+            return {name: [dict(r) for r in conn.execute(sql)] for name, sql in {
+                "subjects":"SELECT * FROM subjects ORDER BY id",
+                "topics":"SELECT * FROM topics ORDER BY subject_id,id",
+                "exams":"SELECT * FROM exams ORDER BY exam_date",
+                "sessions":"SELECT * FROM study_sessions ORDER BY session_date,id",
+                "memory_states":"SELECT * FROM memory_states ORDER BY topic_id",
+            }.items()}
