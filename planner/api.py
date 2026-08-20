@@ -13,12 +13,12 @@ from pydantic import BaseModel, Field
 from .adaptation import recalibrated_complexity, update_topic_from_session
 from .analytics import summarize, topic_time_history
 from .export import sessions_csv, snapshot_json
-from .models import Exam, PriorityWeights, Subject, Topic, UserProfile
+from .models import Exam, PriorityWeights, Subject, Topic, UserProfile, best_exam_for_topic
 from .optimizer import optimize_week
 from .storage import StudyDB
 from .weekly import generate_balanced_week
 
-app = FastAPI(title="Med School Study Planner", version="0.7.0")
+app = FastAPI(title="Med School Study Planner", version="0.8.0")
 db = StudyDB(os.getenv("STUDY_PLANNER_DB", "study_planner.db"))
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -33,6 +33,7 @@ class PlanRequest(BaseModel):
     weights: PriorityWeights = PriorityWeights()
     optimizer: bool = True
     persist: bool = False
+    replace_uncompleted: bool = True
 
 class CompleteRequest(BaseModel):
     actual_minutes: int = Field(ge=0)
@@ -89,7 +90,7 @@ def root():
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "engine": "adaptive-tiered-optimizer", "ui": "available", "version": "0.7.0"}
+    return {"status": "ok", "engine": "adaptive-tiered-optimizer", "ui": "available", "version": "0.8.0"}
 
 @app.get("/profile")
 def get_profile():
@@ -116,6 +117,8 @@ def remove_subject(subject_id: str):
         db.delete_subject(subject_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Subject not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "deleted", "id": subject_id}
 
 @app.post("/topics")
@@ -135,6 +138,8 @@ def remove_topic(topic_id: str):
         db.delete_topic(topic_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Topic not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "deleted", "id": topic_id}
 
 @app.post("/exams")
@@ -156,11 +161,16 @@ def remove_exam(exam_id: str):
 
 @app.post("/plan")
 def plan(request: PlanRequest):
-    result = (optimize_week if request.optimizer else generate_balanced_week)(request.subjects, request.topics, request.exams, request.profile, request.start_date, request.days, request.weights)
+    result = (optimize_week if request.optimizer else generate_balanced_week)(
+        request.subjects, request.topics, request.exams, request.profile,
+        request.start_date, request.days, request.weights,
+    )
     session_ids: list[int] = []
     if request.persist:
         db.save_profile(request.profile)
         db.save_curriculum(request.subjects, request.topics, request.exams)
+        if request.replace_uncompleted:
+            db.delete_uncompleted_sessions_in_range(request.start_date, request.start_date + timedelta(days=request.days))
         session_ids = db.save_sessions(result.sessions)
     sessions = []
     for index, session in enumerate(result.sessions):
@@ -184,6 +194,8 @@ def complete(session_id: int, request: CompleteRequest):
         db.complete_session(session_id, request.actual_minutes, request.performance_score)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.update_topic(updated)
     db.save_memory_state(topic.id, new_memory)
     return {"topic": asdict(updated), "memory": asdict(new_memory)}
@@ -191,8 +203,24 @@ def complete(session_id: int, request: CompleteRequest):
 @app.post("/sessions/{session_id}/reschedule")
 def reschedule(session_id: int, request: RescheduleRequest):
     profile = db.get_profile()
+    snap = db.snapshot()
+    rows = {int(row["id"]): row for row in snap["sessions"]}
+    row = rows.get(session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row["completed"]:
+        raise HTTPException(status_code=409, detail="Completed sessions cannot be rescheduled")
     if request.new_date.weekday() in profile.rest_weekdays:
         raise HTTPException(status_code=409, detail="That day is configured as a rest day")
+    _, topics, exams = db.load_curriculum()
+    topic = next((t for t in topics if t.id == row["topic_id"]), None)
+    exam = best_exam_for_topic(topic, exams, request.new_date) if topic else None
+    if exam is not None and request.new_date > exam.date:
+        raise HTTPException(status_code=409, detail=f"Cannot move this session after relevant exam {exam.id} on {exam.date}")
+    if request.new_date != date.fromisoformat(row["session_date"]):
+        target_load = sum(int(s["planned_minutes"]) for s in snap["sessions"] if s["session_date"] == request.new_date.isoformat() and not s["completed"])
+        if target_load + int(row["planned_minutes"]) > profile.daily_available_minutes:
+            raise HTTPException(status_code=409, detail="Target day would exceed the daily study limit")
     try:
         db.reschedule_session(session_id, request.new_date)
     except KeyError as exc:
@@ -208,15 +236,39 @@ def replan(request: ReplanRequest):
     if not subjects or not topics:
         raise HTTPException(status_code=409, detail="No saved curriculum to replan")
     snap = db.snapshot()
-    locked = {int(row["id"]): row for row in snap["sessions"] if int(row["id"]) in set(request.locked_session_ids)}
-    locked_keys = {(row["session_date"], row["topic_id"]) for row in locked.values()}
-    result = (optimize_week if request.optimizer else generate_balanced_week)(subjects, topics, exams, profile, request.start_date, request.days, request.weights)
+    requested = set(request.locked_session_ids)
+    rows_by_id = {int(row["id"]): row for row in snap["sessions"]}
+    missing = requested - rows_by_id.keys()
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Locked session(s) not found: {sorted(missing)}")
+    completed = {sid for sid in requested if rows_by_id[sid]["completed"]}
+    if completed:
+        raise HTTPException(status_code=409, detail=f"Completed session(s) cannot be locked: {sorted(completed)}")
+    horizon_end = request.start_date + timedelta(days=request.days)
+    locked = {sid: row for sid, row in rows_by_id.items() if sid in requested and request.start_date <= date.fromisoformat(row["session_date"]) < horizon_end}
+    blocked = {}
+    locked_keys = set()
+    locked_subject_minutes = {}
+    subject_by_topic = {t.id: t.subject_id for t in topics}
+    for row in locked.values():
+        day = row["session_date"]
+        blocked[day] = blocked.get(day, 0) + int(row["planned_minutes"])
+        locked_keys.add((day, row["topic_id"]))
+        sid = subject_by_topic.get(row["topic_id"])
+        if sid:
+            locked_subject_minutes[sid] = locked_subject_minutes.get(sid, 0) + int(row["planned_minutes"])
+    result = (optimize_week if request.optimizer else generate_balanced_week)(
+        subjects, topics, exams, profile, request.start_date, request.days, request.weights, blocked,
+    )
     end = request.start_date + timedelta(days=request.days)
     db.delete_uncompleted_sessions_in_range(request.start_date, end, set(locked))
     filtered = [s for s in result.sessions if (s.date.isoformat(), s.topic_id) not in locked_keys]
     ids = db.save_sessions(filtered)
     sessions = [asdict(s) | {"session_type": s.session_type.value, "session_id": ids[i]} for i, s in enumerate(filtered)]
-    return {"sessions": sessions, "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor,
+    subject_minutes = dict(result.subject_minutes)
+    for sid, mins in locked_subject_minutes.items():
+        subject_minutes[sid] = subject_minutes.get(sid, 0) + mins
+    return {"sessions": sessions, "subject_minutes": subject_minutes, "unfulfilled_floor": result.unfulfilled_floor,
             "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage, "optimizer": request.optimizer,
             "locked_session_ids": sorted(locked)}
 
@@ -227,6 +279,8 @@ def analytics():
 
 @app.get("/memory/{topic_id}")
 def memory(topic_id: str):
+    if db.get_topic(topic_id) is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
     return asdict(db.get_memory_state(topic_id))
 
 @app.post("/calibrate")
