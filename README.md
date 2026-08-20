@@ -2,15 +2,29 @@
 
 An adaptive, fairness-constrained medical study planner that turns curriculum, exams, mastery, memory state, and real study performance into a continuously replanned schedule.
 
+## USMLE-first onboarding
+
+The first-run experience includes a one-click **USMLE Step 1** preset. It uses the current official Step 1 content-outline system ranges as planning signals, stores their midpoints as blueprint weights, generates a starter curriculum, and immediately produces a weekly plan. USMLE itself describes these as ranges that can change, so the planner treats them as priorities rather than exact prediction of any individual form.
+
+API endpoints:
+
+```text
+POST /setup/step1
+GET  /presets/step1
+```
+
+Official source: https://www.usmle.org/exam-resources/step-1-materials/step-1-content-outline-and-specifications
+
 ## Pipeline
 
-`Curriculum + Exams + Profile -> Complexity + Priority -> Weekly fairness + memory/review -> Rule scheduler / CP-SAT -> Study sessions -> Completion/performance -> Memory + mastery + time calibration -> Replan`
+`Curriculum + Exams + Profile -> Blueprint/Complexity + Priority -> Weekly fairness + memory/review -> Rule scheduler / CP-SAT -> Study sessions -> Completion/performance -> Memory + mastery + time calibration -> Replan`
 
 ## Implemented
 
 - Subject, Topic, Exam, StudySession, and UserProfile domain model.
+- Official USMLE Step 1 starter blueprint with preloaded system priorities.
 - Complexity scoring from volume, cognitive load, and personal difficulty.
-- Priority scoring from urgency, complexity, mastery gap, exam weighting, and review state.
+- Priority scoring from urgency, complexity, mastery gap, normalized exam weighting, and review state.
 - Weekly subject fairness floors with explicit residual debt.
 - Protected review allocation that increases near exams.
 - SQLite persistence for curriculum, exams, topics, sessions, profile, and memory state.
@@ -22,35 +36,11 @@ An adaptive, fairness-constrained medical study planner that turns curriculum, e
 - Explicit reporting of unfulfilled fairness and exam-coverage requirements.
 - Drag-and-drop session rescheduling with server-side rest-day, daily-cap, and exam-deadline validation.
 - Locked-session replanning that preserves moved work and accounts for its subject/time/topic coverage.
-- Browser UI for Today, Week, Curriculum, Exams, Insights, session completion, and planner settings.
-- Curriculum/exam CRUD and profile settings UI.
+- Beginner-focused browser UI for Today, Week, Curriculum, Exams, Insights, session completion, and planner settings.
 - JSON snapshot and CSV session exports.
 - Dockerfile + Compose deployment with persistent SQLite storage.
 - GitHub Actions CI with compile checks and full test suite.
-
-## API
-
-```text
-GET  /health
-GET  /profile
-PUT  /profile
-POST /subjects
-DELETE /subjects/{id}
-POST /topics
-DELETE /topics/{id}
-POST /exams
-DELETE /exams/{id}
-POST /plan
-POST /replan
-POST /sessions/{id}/complete
-POST /sessions/{id}/reschedule
-GET  /analytics
-GET  /memory/{topic_id}
-POST /calibrate
-GET  /snapshot
-GET  /export/snapshot.json
-GET  /export/sessions.csv
-```
+- GitHub Pages frontend + Render/FastAPI backend deployment path.
 
 ## Run locally
 
@@ -60,27 +50,19 @@ uvicorn planner.api:app --reload
 pytest -q
 ```
 
-The local UI is available at `http://127.0.0.1:8000/` and talks to the same FastAPI process.
+The local UI is available at `http://127.0.0.1:8000/`.
 
 ## GitHub Pages frontend
 
-The static frontend can be deployed as a GitHub Pages project site:
+The static frontend deploys to:
 
 `https://virelion-biotech.github.io/Med-School-Study-Planner/`
 
-The Pages workflow is `.github/workflows/pages.yml`. Before enabling it, create a GitHub repository variable named `PLANNER_API_BASE` containing the public FastAPI URL, for example:
-
-```text
-https://med-school-study-planner-api.example.com
-```
-
-The workflow injects that value into `planner/static/api-config.js` during the Pages build. The frontend then sends API requests to that backend while static assets remain hosted by GitHub Pages.
+Create a GitHub repository variable named `PLANNER_API_BASE` containing the public FastAPI URL. The Pages workflow injects it during deployment.
 
 ## Backend deployment
 
-A Render deployment definition is provided in `render.yaml`. It runs FastAPI with the optimizer installed, exposes `/health` for health checks, enables the GitHub Pages origin through CORS, and stores SQLite at `/data/study_planner.db` on a persistent disk.
-
-After deploying the backend, copy its public HTTPS URL into the repository variable `PLANNER_API_BASE`, then run the Pages workflow from Actions or push to `main`.
+A Render deployment definition is provided in `render.yaml`. The backend runs FastAPI with OR-Tools, exposes `/health`, supports GitHub Pages through CORS, and persists SQLite data on the configured disk.
 
 ## Docker
 
@@ -89,7 +71,3 @@ docker compose up --build
 ```
 
 The planner stores its SQLite database at `/data/study_planner.db` inside the container volume.
-
-## Design principles
-
-The scheduling engine is intentionally interpretable. Optimization is optional, hard constraints are surfaced instead of silently violated, and real usage data is fed back into memory scheduling and complexity estimation rather than treated as static inputs.
