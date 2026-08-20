@@ -26,9 +26,17 @@ def _review_fraction(profile: UserProfile, day: date, exams: list[Exam]) -> floa
 
 
 def generate_balanced_week(
-    subjects: list[Subject], topics: list[Topic], exams: list[Exam], profile: UserProfile,
-    start: date, days: int = 7, weights: PriorityWeights = PriorityWeights(),
+    subjects: list[Subject],
+    topics: list[Topic],
+    exams: list[Exam],
+    profile: UserProfile,
+    start: date,
+    days: int = 7,
+    weights: PriorityWeights = PriorityWeights(),
+    blocked_minutes_by_day: dict[str, int] | None = None,
 ) -> WeeklyPlan:
+    """Generate a week while respecting weekly floors and already locked sessions."""
+    blocked_minutes_by_day = blocked_minutes_by_day or {}
     if days < 1:
         return WeeklyPlan([], {}, {})
     active = _active_subjects(subjects, topics, exams, start)
@@ -36,7 +44,11 @@ def generate_balanced_week(
         return WeeklyPlan([], {}, {})
 
     available_days = sum((start + timedelta(i)).weekday() not in profile.rest_weekdays for i in range(days))
-    capacity = available_days * profile.daily_available_minutes
+    capacity = sum(
+        max(0, profile.daily_available_minutes - max(0, blocked_minutes_by_day.get((start + timedelta(i)).isoformat(), 0)))
+        for i in range(days)
+        if (start + timedelta(i)).weekday() not in profile.rest_weekdays
+    )
     requested_floor = profile.minimum_subject_minutes_week
     total_floor = requested_floor * len(active)
     floor_scale = min(1.0, capacity / total_floor) if total_floor else 1.0
@@ -55,9 +67,11 @@ def generate_balanced_week(
         if day.weekday() in profile.rest_weekdays:
             continue
         remaining_days = sum((start + timedelta(j)).weekday() not in profile.rest_weekdays for j in range(offset, days))
-        available = profile.daily_available_minutes
-        scores = {t.id: topic_priority(t, subject_map[t.subject_id], day, best_exam_for_topic(t, exams, day), weights)
-                  for t in topics if t.subject_id in subject_map}
+        available = max(0, profile.daily_available_minutes - max(0, blocked_minutes_by_day.get(day.isoformat(), 0)))
+        scores = {
+            t.id: topic_priority(t, subject_map[t.subject_id], day, best_exam_for_topic(t, exams, day), weights)
+            for t in topics if t.subject_id in subject_map
+        }
 
         for subject in sorted(active, key=lambda s: floor_debt[s.id], reverse=True):
             if available <= 0 or floor_debt[subject.id] <= 0 or not by_subject[subject.id]:
@@ -73,9 +87,12 @@ def generate_balanced_week(
             subject_minutes[subject.id] += mins
             available -= mins
 
-        review_budget = min(available, round(profile.daily_available_minutes * _review_fraction(profile, day, exams)))
-        due = sorted([t for t in topics if t.subject_id in subject_map and t.next_review_due and t.next_review_due <= day],
-                     key=lambda t: scores[t.id], reverse=True)
+        review_budget = min(available, round(available * _review_fraction(profile, day, exams)))
+        due = sorted(
+            [t for t in topics if t.subject_id in subject_map and t.next_review_due and t.next_review_due <= day],
+            key=lambda t: scores[t.id],
+            reverse=True,
+        )
         for topic in due:
             if review_budget <= 0 or available <= 0:
                 break
