@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Med School Study Planner</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">M</span><div><strong>Study Planner</strong><small>adaptive medical learning</small></div></div>
+      <nav id="nav">
+        <button class="nav-item active" data-view="today">Today</button>
+        <button class="nav-item" data-view="week">Week</button>
+        <button class="nav-item" data-view="curriculum">Curriculum</button>
+        <button class="nav-item" data-view="exams">Exams</button>
+        <button class="nav-item" data-view="insights">Insights</button>
+      </nav>
+      <div class="sidebar-foot"><span class="status-dot"></span><span id="engine-status">Engine connected</span></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><p class="eyebrow">Adaptive planning</p><h1 id="page-title">Today</h1></div>
+        <div class="toolbar"><button id="replan" class="btn primary">Replan week</button><button id="seed" class="btn ghost">Load demo</button></div>
+      </header>
+      <section id="view" class="view"></section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
