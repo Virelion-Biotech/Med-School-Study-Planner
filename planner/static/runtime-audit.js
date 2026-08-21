@@ -15,9 +15,7 @@
       window.__plannerSnapshot = snapshot;
       window.__plannerProfile = profile;
       document.dispatchEvent(new CustomEvent('planner:ready'));
-    } catch (_) {
-      // The core app already renders its offline state; don't replace it here.
-    }
+    } catch (_) {}
   }
 
   function bindNavigationFallback() {
@@ -41,9 +39,29 @@
     });
   }
 
+  function hardenActions() {
+    if (window.__auditActionsBound) return;
+    if (window.importText) {
+      const originalImport = window.importText;
+      window.importText = async text => {
+        await originalImport(text);
+        if (window.replanWeek) await window.replanWeek();
+      };
+    }
+    if (window.saveQuestions) {
+      const originalQuestions = window.saveQuestions;
+      window.saveQuestions = async (...args) => {
+        await originalQuestions(...args);
+        if (window.replanWeek) await window.replanWeek();
+      };
+    }
+    window.__auditActionsBound = true;
+  }
+
   function boot() {
     bindNavigationFallback();
     bindModeFallback();
+    hardenActions();
     sync();
   }
 
@@ -52,5 +70,6 @@
   document.addEventListener('planner:ready', () => {
     bindNavigationFallback();
     bindModeFallback();
+    hardenActions();
   });
 })();
