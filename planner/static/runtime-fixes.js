@@ -70,11 +70,22 @@
     }));
   };
 
+  function renderFirstRun() {
+    const snap=window.__plannerSnapshot||{};
+    if ((snap.topics||[]).length) return;
+    const view=document.querySelector('#view');
+    if(!view) return;
+    view.innerHTML=`<div class="hero onboarding"><div><div class="kicker">START HERE</div><h2>Tell me what you're studying.</h2><p>You don't need to build a complicated curriculum. Pick USMLE, your medical school, or make a simple personal plan.</p><div class="hero-actions"><button class="btn primary big" type="button" id="first-usmle">USMLE Step 1</button><button class="btn secondary big" type="button" id="first-school">My medical school</button><button class="btn secondary big" type="button" id="first-personal">Personal planner</button></div><small>We'll create the first week for you.</small></div><div class="blueprint"><div class="blueprint-head"><strong>What you need to give us</strong><span>3 choices</span></div><div class="blueprint-row"><span>USMLE</span><b>current block</b></div><div class="blueprint-row"><span>School</span><b>year + course</b></div><div class="blueprint-row"><span>Personal</span><b>subjects + workload</b></div></div></div>`;
+    document.querySelector('#first-usmle').onclick=window.openStep1BlockPicker;
+    document.querySelector('#first-school').onclick=window.openSchoolPicker;
+    document.querySelector('#first-personal').onclick=window.startPersonalPlanner;
+  }
+
   function bindModeButtons() {
     ['#reset-btn','#mode-btn'].forEach(selector => {
       const button = document.querySelector(selector);
       if (!button || button.dataset.runtimeBound) return;
-      button.dataset.runtimeBound = '1';
+      button.dataset.runtimeBound='1';
       button.addEventListener('click', event => { event.preventDefault(); event.stopImmediatePropagation(); window.openPlannerSetup(); });
     });
   }
@@ -82,12 +93,11 @@
   async function boot() {
     bindModeButtons();
     await syncPublicState();
-    if (typeof window.load === 'function') {
-      try { await window.load(); } catch (_) {}
-    }
+    if (typeof window.load==='function') { try { await window.load(); } catch (_) {} }
+    renderFirstRun();
     bindModeButtons();
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, {once:true});
+  if (document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot, {once:true});
   else boot();
 })();
