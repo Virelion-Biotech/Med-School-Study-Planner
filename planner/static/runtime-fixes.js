@@ -1,8 +1,7 @@
 (() => {
   const api = (path, options = {}) => fetch(window.plannerApiUrl(path), {headers:{'Content-Type':'application/json', ...(options.headers||{})}, ...options}).then(async r => {let b={};try{b=await r.json()}catch{}if(!r.ok)throw Error(b.detail||`HTTP ${r.status}`);return b});
+  const today = () => new Date().toISOString().slice(0,10);
 
-  // The core app keeps its state in a lexical const, so feature modules cannot see it.
-  // Keep a small public mirror for optional modules instead of coupling them to internals.
   async function syncPublicState() {
     try {
       window.__plannerSnapshot = await api('/snapshot');
@@ -11,7 +10,6 @@
     } catch (_) { return false; }
   }
 
-  // Make the notification API available to feature modules.
   window.toast = window.toast || function(message) {
     const el = document.querySelector('#toast');
     if (!el) return;
@@ -21,7 +19,34 @@
     window.__runtimeToastTimer = setTimeout(() => el.classList.remove('show'), 2600);
   };
 
-  // A reliable mode chooser. It does not depend on inline handlers or script order.
+  async function chooseStep1Block(blockId, label) {
+    try {
+      window.toast(`Building Step 1 around ${label}…`);
+      await api('/setup/step1', {method:'POST', body:JSON.stringify({start_date:today(), current_block:blockId})});
+      localStorage.setItem('planner-mode','usmle');
+      window.__plannerMode='usmle';
+      window.__plannerBlock=label;
+      const modal=document.querySelector('#modal');
+      if(modal) modal.classList.add('hidden');
+      if(typeof window.load==='function') await window.load();
+      window.toast(`${label} is now your focus`);
+    } catch (e) { window.toast(e.message); }
+  }
+
+  window.openStep1BlockPicker = function() {
+    const modal=document.querySelector('#modal');
+    if(!modal) return;
+    const blocks=[
+      ['cardio','Cardiovascular'],['resp-renal','Respiratory & Renal'],['gi','Gastrointestinal'],
+      ['repro-endo','Reproductive & Endocrine'],['neuro','Neuro / Behavioral'],['immune-blood','Blood & Immune'],
+      ['msk-skin','MSK / Skin'],['multisystem','Multisystem'],['development','Human Development'],
+      ['biostats','Biostats / Epidemiology'],['communication','Communication']
+    ];
+    modal.innerHTML=`<div class="modal-card smart-tool"><div class="setup-kicker">USMLE STEP 1</div><h2>What are you studying right now?</h2><p>Pick your current block. It gets extra priority this week; the rest of Step 1 stays in the background.</p><div class="mode-grid">${blocks.map(([id,label])=>`<button class="mode-choice" type="button" data-step1-block="${id}"><strong>${label}</strong><span>Give this block extra time.</span><b>Study this →</b></button>`).join('')}</div></div>`;
+    modal.classList.remove('hidden');
+    modal.querySelectorAll('[data-step1-block]').forEach(b=>b.addEventListener('click',()=>chooseStep1Block(b.dataset.step1Block,b.querySelector('strong').textContent)));
+  };
+
   window.openPlannerSetup = function() {
     const modal = document.querySelector('#modal');
     if (!modal) return;
@@ -38,15 +63,13 @@
     modal.classList.remove('hidden');
     modal.querySelectorAll('[data-runtime-mode]').forEach(button => button.addEventListener('click', () => {
       const mode = button.dataset.runtimeMode;
-      modal.classList.add('hidden');
-      if (mode === 'usmle' && typeof window.startStep1 === 'function') window.startStep1();
+      if (mode === 'usmle') window.openStep1BlockPicker();
       else if (mode === 'school' && typeof window.openSchoolPicker === 'function') window.openSchoolPicker();
       else if (mode === 'personal' && typeof window.startPersonalPlanner === 'function') window.startPersonalPlanner();
       else window.toast('This setup is still loading. Try again in a moment.');
     }));
   };
 
-  // Ensure Change plan and Change mode always open the same reliable chooser.
   function bindModeButtons() {
     ['#reset-btn','#mode-btn'].forEach(selector => {
       const button = document.querySelector(selector);
@@ -59,7 +82,6 @@
   async function boot() {
     bindModeButtons();
     await syncPublicState();
-    // Product-suite enhancements use this mirror and can now initialize reliably.
     if (typeof window.load === 'function') {
       try { await window.load(); } catch (_) {}
     }
