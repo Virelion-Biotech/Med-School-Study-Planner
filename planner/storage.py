@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterator
 
 from .memory import MemoryState
 from .models import Exam, StudySession, Subject, Topic, UserProfile
+
+CURRENT_USER: ContextVar[str] = ContextVar("planner_user", default="default")
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -45,17 +49,31 @@ CREATE INDEX IF NOT EXISTS idx_sessions_topic ON study_sessions(topic_id);
 CREATE INDEX IF NOT EXISTS idx_topics_subject ON topics(subject_id);
 """
 
+
 class StudyDB:
     def __init__(self, path: str | Path = "study_planner.db") -> None:
         self.path = str(path)
         self.initialize()
 
+    def _path_for_user(self) -> str:
+        user_id = CURRENT_USER.get()
+        if user_id == "default":
+            return self.path
+        digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:32]
+        base = Path(self.path)
+        return str(base.with_name(f"{base.stem}-{digest}{base.suffix}"))
+
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path)
+        path = Path(self._path_for_user())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         try:
+            # Idempotent and cheap for this small schema; also initializes a new
+            # per-user database on the first request without a race-prone global DB.
+            conn.executescript(SCHEMA)
             yield conn
             conn.commit()
         finally:

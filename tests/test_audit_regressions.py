@@ -1,7 +1,10 @@
 from datetime import date, timedelta
 
+import pytest
+
 from planner.models import Exam, PriorityWeights, Subject, Topic, UserProfile, urgency_score
 from planner.optimizer import optimize_week
+from planner.storage import CURRENT_USER, StudyDB
 
 
 def test_passed_exam_has_no_urgency():
@@ -26,3 +29,35 @@ def test_exam_coverage_counts_preallocated_topic_time():
     profile = UserProfile(daily_available_minutes=60, minimum_subject_minutes_week=0)
     plan = optimize_week(subjects, topics, [exam], profile, start, 3, preallocated_topic_minutes={'t': 60})
     assert all('e:t' not in key for key in plan.unfulfilled_exam_coverage)
+
+
+def test_user_workspaces_are_isolated(tmp_path):
+    db = StudyDB(tmp_path / 'planner.db')
+    first = CURRENT_USER.set('browser-one')
+    try:
+        db.save_curriculum([Subject('s1', 'First')], [Topic('t1', 's1', 'First topic')], [])
+        assert [s['id'] for s in db.snapshot()['subjects']] == ['s1']
+    finally:
+        CURRENT_USER.reset(first)
+    second = CURRENT_USER.set('browser-two')
+    try:
+        assert db.snapshot()['subjects'] == []
+        db.save_curriculum([Subject('s2', 'Second')], [Topic('t2', 's2', 'Second topic')], [])
+    finally:
+        CURRENT_USER.reset(second)
+    first_again = CURRENT_USER.set('browser-one')
+    try:
+        assert [s['id'] for s in db.snapshot()['subjects']] == ['s1']
+        assert [t['id'] for t in db.snapshot()['topics']] == ['t1']
+    finally:
+        CURRENT_USER.reset(first_again)
+
+
+def test_new_storage_connections_initialize_user_schema(tmp_path):
+    db = StudyDB(tmp_path / 'planner.db')
+    token = CURRENT_USER.set('new-browser')
+    try:
+        db.save_profile(UserProfile(daily_available_minutes=180))
+        assert db.get_profile().daily_available_minutes == 180
+    finally:
+        CURRENT_USER.reset(token)

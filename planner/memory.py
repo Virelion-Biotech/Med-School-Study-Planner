@@ -24,7 +24,7 @@ def next_memory_state(state: MemoryState, rating: float) -> tuple[MemoryState, i
     Rating is a continuous 0..1 recall score. This is intentionally transparent,
     deterministic, and replaceable by a fuller FSRS implementation later.
     """
-    r = _clamp(rating)
+    r = _clamp(rating, 0.0, 1.0)
     ef = state.ease_factor
     if r < 0.6:
         repetitions = 0
