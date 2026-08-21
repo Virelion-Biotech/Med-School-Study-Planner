@@ -11,18 +11,18 @@
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-icon">M</div>
+        <div class="brand-icon" aria-hidden="true">M</div>
         <div><strong>Study Planner</strong><small>adaptive medical learning</small></div>
       </div>
       <div class="side-label">PLAN</div>
-      <nav id="nav">
+      <nav id="nav" aria-label="Planner navigation">
         <button class="nav active" data-view="today" type="button">Today</button>
         <button class="nav" data-view="week" type="button">My Week</button>
         <button class="nav" data-view="curriculum" type="button">Curriculum</button>
         <button class="nav" data-view="exams" type="button">Exams</button>
-        <button class="nav" data-view="insights" type="button">Insights</button>
+        <button class="nav" data-view="insights" type="button">Progress</button>
       </nav>
-      <div class="sidebar-tip"><span>CURRENT PLAN</span><strong>Study Plan</strong><small>Choose USMLE, school, or personal mode</small></div>
+      <div class="sidebar-tip"><span>CURRENT PLAN</span><strong>Study Plan</strong><small>Choose USMLE, school, or personal mode.</small></div>
       <div class="sidebar-status"><span class="dot" id="status-dot"></span><span id="status">Connecting…</span></div>
     </aside>
     <main class="main">
@@ -34,11 +34,11 @@
           <button class="btn primary" id="replan-btn" type="button" onclick="replanWeek()">Rebuild week</button>
         </div>
       </header>
-      <section id="view"></section>
+      <section id="view" aria-live="polite"></section>
     </main>
   </div>
-  <div id="modal" class="modal hidden"></div>
-  <div id="toast" class="toast"></div>
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="./api-config.js"></script>
   <script src="./app.js" defer></script>
   <script src="./personal-v2.js" defer></script>
@@ -49,5 +49,6 @@
   <script src="./advanced-import.js" defer></script>
   <script src="./ui-mode.js" defer></script>
   <script src="./runtime-audit.js" defer></script>
+  <script src="./runtime-fixes.js" defer></script>
 </body>
 </html>
