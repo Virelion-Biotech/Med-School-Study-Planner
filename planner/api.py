@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,16 +18,29 @@ from .export import sessions_csv, snapshot_json
 from .models import Exam, PriorityWeights, Subject, Topic, UserProfile, best_exam_for_topic
 from .optimizer import optimize_week
 from .presets import step1_preset
-from .storage import StudyDB
+from .storage import CURRENT_USER, StudyDB
 from .weekly import generate_balanced_week
 
-app = FastAPI(title="Med School Study Planner", version="0.9.0")
+app = FastAPI(title="Med School Study Planner", version="0.9.1")
 allowed_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://127.0.0.1:8000,http://localhost:8000").split(",") if origin.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_origin_regex=r"https://[A-Za-z0-9-]+\.github\.io", allow_credentials=False, allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], allow_headers=["*"])
 
 db = StudyDB(os.getenv("STUDY_PLANNER_DB", "study_planner.db"))
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.middleware("http")
+async def bind_browser_workspace(request: Request, call_next):
+    raw = request.headers.get("x-planner-user", "default").strip()
+    if not raw or len(raw) > 128 or not re.fullmatch(r"[A-Za-z0-9._:-]+", raw):
+        raw = "default"
+    token = CURRENT_USER.set(raw)
+    try:
+        return await call_next(request)
+    finally:
+        CURRENT_USER.reset(token)
+
 
 class PlanRequest(BaseModel):
     subjects: list[Subject]
@@ -40,13 +54,16 @@ class PlanRequest(BaseModel):
     persist: bool = False
     replace_uncompleted: bool = True
 
+
 class CompleteRequest(BaseModel):
     actual_minutes: int = Field(ge=0)
     performance_score: float = Field(ge=0, le=1)
     completed_on: date | None = None
 
+
 class RescheduleRequest(BaseModel):
     new_date: date
+
 
 class ReplanRequest(BaseModel):
     start_date: date
@@ -55,11 +72,18 @@ class ReplanRequest(BaseModel):
     optimizer: bool = True
     locked_session_ids: list[int] = Field(default_factory=list)
 
+
+class Step1SetupRequest(BaseModel):
+    start_date: date | None = None
+    current_block: str | None = Field(default=None, max_length=100)
+
+
 class SubjectRequest(BaseModel):
     id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     name: str = Field(min_length=1, max_length=200)
     exam_weight: float = Field(default=1.0, ge=0)
     category: str = Field(default="general", max_length=100)
+
 
 class TopicRequest(BaseModel):
     id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
@@ -74,12 +98,14 @@ class TopicRequest(BaseModel):
     last_studied: date | None = None
     next_review_due: date | None = None
 
+
 class ExamRequest(BaseModel):
     id: str = Field(min_length=1, max_length=100)
     date: date
     subject_ids: list[str] = Field(default_factory=list)
     topic_ids: list[str] = Field(default_factory=list)
     weight: float = Field(default=1.0, ge=0)
+
 
 class ProfileRequest(BaseModel):
     daily_available_minutes: int = Field(default=240, ge=30, le=1440)
@@ -89,17 +115,21 @@ class ProfileRequest(BaseModel):
     rest_weekdays: list[int] = Field(default_factory=list)
     energy_pattern: list[str] = Field(default_factory=lambda: ["high", "medium", "medium", "low"])
 
+
 @app.get("/", include_in_schema=False)
 def root():
     return FileResponse(STATIC_DIR / "index.html")
 
+
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "engine": "adaptive-tiered-optimizer", "ui": "available", "version": "0.9.0"}
+    return {"status": "ok", "engine": "adaptive-tiered-optimizer", "ui": "available", "version": "0.9.1"}
+
 
 @app.get("/profile")
 def get_profile():
     return asdict(db.get_profile())
+
 
 @app.put("/profile")
 def update_profile(request: ProfileRequest):
@@ -109,27 +139,38 @@ def update_profile(request: ProfileRequest):
     db.save_profile(profile)
     return asdict(profile)
 
+
 @app.post("/setup/step1")
-def setup_step1(start_date: date | None = None):
-    start = start_date or date.today()
+def setup_step1(request: Step1SetupRequest | None = None):
+    request = request or Step1SetupRequest()
+    start = request.start_date or date.today()
     subjects, topics, exams, profile = step1_preset(start)
+    if request.current_block:
+        block = request.current_block.strip().lower()
+        subjects = [
+            Subject(s.id, s.name, s.exam_weight * 2.2 if s.id.lower() == block else s.exam_weight, s.category)
+            for s in subjects
+        ]
     db.save_profile(profile)
     db.save_curriculum(subjects, topics, exams)
     db.delete_uncompleted_sessions_in_range(start, start + timedelta(days=14))
     result = optimize_week(subjects, topics, exams, profile, start, 7, PriorityWeights())
     ids = db.save_sessions(result.sessions)
     sessions = [asdict(s) | {"session_type": s.session_type.value, "session_id": ids[i]} for i, s in enumerate(result.sessions)]
-    return {"preset": "USMLE Step 1", "subjects": len(subjects), "topics": len(topics), "sessions": sessions, "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor, "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage}
+    return {"preset": "USMLE Step 1", "current_block": request.current_block, "subjects": len(subjects), "topics": len(topics), "sessions": sessions, "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor, "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage}
+
 
 @app.get("/presets/step1")
 def get_step1_preset():
     subjects, topics, exams, profile = step1_preset(date.today())
     return {"preset": "USMLE Step 1", "subjects": [asdict(s) for s in subjects], "topics": [asdict(t) for t in topics], "exams": [asdict(e) for e in exams], "profile": asdict(profile)}
 
+
 @app.post("/subjects")
 def create_subject(request: SubjectRequest):
     db.upsert_subject(Subject(request.id, request.name, request.exam_weight, request.category))
     return {"status": "saved", "subject": request.model_dump()}
+
 
 @app.delete("/subjects/{subject_id}")
 def remove_subject(subject_id: str):
@@ -141,6 +182,7 @@ def remove_subject(subject_id: str):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "deleted", "id": subject_id}
 
+
 @app.post("/topics")
 def create_topic(request: TopicRequest):
     topic = Topic(request.id, request.subject_id, request.name, request.complexity, request.estimated_hours, request.mastery, request.last_studied, request.next_review_due, request.self_difficulty, request.volume, request.cognitive_load)
@@ -149,6 +191,7 @@ def create_topic(request: TopicRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "saved", "topic": asdict(topic)}
+
 
 @app.delete("/topics/{topic_id}")
 def remove_topic(topic_id: str):
@@ -160,6 +203,7 @@ def remove_topic(topic_id: str):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "deleted", "id": topic_id}
 
+
 @app.post("/exams")
 def create_exam(request: ExamRequest):
     exam = Exam(request.id, request.date, tuple(dict.fromkeys(request.subject_ids)), tuple(dict.fromkeys(request.topic_ids)), request.weight)
@@ -169,6 +213,7 @@ def create_exam(request: ExamRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "saved", "exam": asdict(exam)}
 
+
 @app.delete("/exams/{exam_id}")
 def remove_exam(exam_id: str):
     try:
@@ -176,6 +221,7 @@ def remove_exam(exam_id: str):
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Exam not found") from exc
     return {"status": "deleted", "id": exam_id}
+
 
 @app.post("/plan")
 def plan(request: PlanRequest):
@@ -195,6 +241,7 @@ def plan(request: PlanRequest):
         sessions.append(payload)
     return {"sessions": sessions, "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor, "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage, "optimizer": request.optimizer, "persisted": request.persist}
 
+
 @app.post("/sessions/{session_id}/complete")
 def complete(session_id: int, request: CompleteRequest):
     topic = db.get_topic_for_session(session_id)
@@ -213,8 +260,11 @@ def complete(session_id: int, request: CompleteRequest):
     db.save_memory_state(topic.id, new_memory)
     return {"topic": asdict(updated), "memory": asdict(new_memory)}
 
+
 @app.post("/sessions/{session_id}/reschedule")
 def reschedule(session_id: int, request: RescheduleRequest):
+    if request.new_date < date.today():
+        raise HTTPException(status_code=409, detail="Study sessions cannot be moved into the past")
     profile = db.get_profile()
     snap = db.snapshot()
     rows = {int(row["id"]): row for row in snap["sessions"]}
@@ -227,9 +277,11 @@ def reschedule(session_id: int, request: RescheduleRequest):
         raise HTTPException(status_code=409, detail="That day is configured as a rest day")
     _, topics, exams = db.load_curriculum()
     topic = next((t for t in topics if t.id == row["topic_id"]), None)
-    exam = best_exam_for_topic(topic, exams, request.new_date) if topic else None
-    if exam is not None and request.new_date > exam.date:
-        raise HTTPException(status_code=409, detail=f"Cannot move this session after relevant exam {exam.id} on {exam.date}")
+    relevant_exams = [e for e in exams if topic and (topic.id in e.topic_ids or topic.subject_id in e.subject_ids)]
+    blocking = [e for e in relevant_exams if request.new_date > e.date]
+    if blocking:
+        nearest = min(blocking, key=lambda e: e.date)
+        raise HTTPException(status_code=409, detail=f"Cannot move this session after relevant exam {nearest.id} on {nearest.date}")
     if request.new_date != date.fromisoformat(row["session_date"]):
         target_load = sum(int(s["planned_minutes"]) for s in snap["sessions"] if s["session_date"] == request.new_date.isoformat() and not s["completed"])
         if target_load + int(row["planned_minutes"]) > profile.daily_available_minutes:
@@ -241,6 +293,7 @@ def reschedule(session_id: int, request: RescheduleRequest):
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "rescheduled", "session_id": session_id, "date": request.new_date}
+
 
 @app.post("/replan")
 def replan(request: ReplanRequest):
@@ -290,16 +343,19 @@ def replan(request: ReplanRequest):
         subject_minutes[sid] = subject_minutes.get(sid, 0) + mins
     return {"sessions": sessions, "subject_minutes": subject_minutes, "unfulfilled_floor": result.unfulfilled_floor, "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage, "optimizer": request.optimizer, "locked_session_ids": sorted(locked)}
 
+
 @app.get("/analytics")
 def analytics():
     snap = db.snapshot()
     return asdict(summarize(snap)) | {"topic_time_history": topic_time_history(snap)}
+
 
 @app.get("/memory/{topic_id}")
 def memory(topic_id: str):
     if db.get_topic(topic_id) is None:
         raise HTTPException(status_code=404, detail="Topic not found")
     return asdict(db.get_memory_state(topic_id))
+
 
 @app.post("/calibrate")
 def calibrate():
@@ -316,13 +372,16 @@ def calibrate():
                 changed.append({"topic_id": topic.id, "complexity": recalibrated})
     return {"updated": changed, "count": len(changed)}
 
+
 @app.get("/export/snapshot.json", response_class=PlainTextResponse)
 def export_snapshot():
     return snapshot_json(db.snapshot())
 
+
 @app.get("/export/sessions.csv", response_class=PlainTextResponse)
 def export_sessions():
     return sessions_csv(db.snapshot())
+
 
 @app.get("/snapshot")
 def snapshot():
