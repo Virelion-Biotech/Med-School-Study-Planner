@@ -1,7 +1,7 @@
 from datetime import date
 
 from planner.adaptation import update_topic_from_session
-from planner.models import Exam, Subject, Topic, UserProfile
+from planner.models import Subject, Topic, UserProfile
 from planner.storage import StudyDB
 from planner.weekly import generate_balanced_week
 
@@ -27,9 +27,10 @@ def test_weekly_floor_is_explicit_and_rest_day_is_empty():
 
 def test_completion_updates_mastery_and_review_due():
     _, topics = curriculum()
-    updated = update_topic_from_session(topics[0], 45, 0.95, date(2026, 8, 20))
+    updated, memory = update_topic_from_session(topics[0], 45, 0.95, date(2026, 8, 20))
     assert updated.mastery > topics[0].mastery
     assert updated.next_review_due == date(2026, 9, 3)
+    assert memory.last_rating == 0.95
 
 
 def test_sqlite_round_trip(tmp_path):
