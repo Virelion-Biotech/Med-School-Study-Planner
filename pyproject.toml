@@ -1,6 +1,6 @@
 [project]
 name = "med-school-study-planner"
-version = "0.8.0"
+version = "0.9.1"
 description = "Adaptive, fairness-constrained medical study planning engine with persistent learning feedback"
 requires-python = ">=3.11,<3.12"
 dependencies = [
