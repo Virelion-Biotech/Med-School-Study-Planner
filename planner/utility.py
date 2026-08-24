@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 import math
 
-from .models import Exam, Subject, Topic, clamp, review_due_score
+from .models import Exam, Subject, Topic, clamp
 
 
 @dataclass(frozen=True)
@@ -54,14 +54,15 @@ def action_utility(
     mastery_probability: float | None = None,
     retrievability: float | None = None,
     current_block: str | None = None,
+    topic_block: str | None = None,
     weights: UtilityWeights = UtilityWeights(),
 ) -> UtilityBreakdown:
     mastery = clamp(topic.mastery if mastery_probability is None else mastery_probability)
-    retention = clamp(topic.memory_retrievability if hasattr(topic, "memory_retrievability") else (retrievability if retrievability is not None else 1.0))
+    retention = clamp(1.0 if retrievability is None else retrievability)
     urgency = smooth_exam_urgency(today, exam.date if exam else None)
     blueprint = clamp(subject.exam_weight if subject.exam_weight <= 1 else subject.exam_weight / 16.0)
     workload = clamp(expected_minutes / 240.0)
-    block = 1.0 if current_block and topic.category == current_block else 0.0 if current_block else 0.0
+    block = 1.0 if current_block and topic_block and topic_block == current_block else 0.0
     total = (
         weights.exam_urgency * urgency
         + weights.mastery_gap * (1.0 - mastery)
@@ -80,7 +81,7 @@ def action_utility(
         reasons.append(f"predicted retention is {round(retention * 100)}%")
     if blueprint >= 0.60:
         reasons.append("high exam blueprint weight")
-    if current_block and block:
+    if block:
         reasons.append("matches the current block")
     if not reasons:
         reasons.append("highest expected learning gain per minute")
