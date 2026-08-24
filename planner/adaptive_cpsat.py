@@ -43,7 +43,7 @@ def optimize_adaptive_week(
     current_block: str | None = None,
     utility_weights: UtilityWeights = UtilityWeights(),
 ) -> AdaptivePlan:
-    """Allocate 15-minute quanta using expected learning gain/min with hard constraints."""
+    """Allocate 15-minute quanta using the activity-aware expected learning gain/min objective."""
     workloads = workloads or {}
     blocked_minutes_by_day = blocked_minutes_by_day or {}
     preallocated_subject_minutes = preallocated_subject_minutes or {}
@@ -86,6 +86,7 @@ def optimize_adaptive_week(
             exam = best_exam_for_topic(topic, exams, day)
             if exam is not None and day > exam.date:
                 continue
+            activity = _session_activity(topic, day)
             upper = min(capacities[d], max_session_blocks, remaining_target)
             var = model.NewIntVar(0, upper, f"adaptive_{topic.id}_{d}")
             vars_[(topic.id, d)] = var
@@ -99,6 +100,7 @@ def optimize_adaptive_week(
                 retrievability=topic.memory_retrievability,
                 current_block=current_block,
                 topic_block=topic.block_id,
+                activity=activity,
                 weights=utility_weights,
             )
             explanations.setdefault(topic.id, breakdown.reasons)
