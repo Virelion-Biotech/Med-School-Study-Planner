@@ -43,7 +43,7 @@ def optimize_adaptive_week(
     current_block: str | None = None,
     utility_weights: UtilityWeights = UtilityWeights(),
 ) -> AdaptivePlan:
-    """Allocate 15-minute quanta using the activity-aware expected learning gain/min objective."""
+    """Allocate 15-minute quanta using activity-aware expected learning gain/min with hard constraints."""
     workloads = workloads or {}
     blocked_minutes_by_day = blocked_minutes_by_day or {}
     preallocated_subject_minutes = preallocated_subject_minutes or {}
@@ -142,8 +142,12 @@ def optimize_adaptive_week(
             possible = sum(v.Proto().domain[-1] for v in relevant)
             model.Add(sum(relevant) >= min(remaining, possible))
 
+    # Review demand grows with overdue/due-topic prevalence rather than always consuming
+    # the same fixed fraction of the week. This protects new learning when few reviews are due.
     due_topics = [t for t in topics if t.next_review_due and t.next_review_due <= start]
-    review_budget = min(sum(capacities.values()), max(0, math.ceil(total_capacity * profile.review_fraction)))
+    due_ratio = len(due_topics) / max(1, len([t for t in topics if t.subject_id in subject_map]))
+    dynamic_review_fraction = min(0.85, profile.review_fraction * (0.50 + 1.50 * due_ratio))
+    review_budget = min(sum(capacities.values()), max(0, math.ceil(total_capacity * dynamic_review_fraction)))
     review_vars = [v for (tid, _), v in vars_.items() if topic_map[tid] in due_topics]
     if review_vars and review_budget:
         model.Add(sum(review_vars) >= min(review_budget // quantum, sum(v.Proto().domain[-1] for v in review_vars)))
@@ -215,9 +219,7 @@ def _greedy_fallback(
             minutes -= minutes % quantum
             if minutes <= 0:
                 continue
-            topic = next((t for t in topics if t.id == action.topic_id), None)
-            activity = _session_activity(topic, day) if topic else ActivityType.MIXED
-            sessions.append(StudySession(day, action.topic_id, minutes, session_type=action.session_type, activity=activity))
+            sessions.append(StudySession(day, action.topic_id, minutes, session_type=action.session_type, activity=action.activity))
             subject_minutes[action.subject_id] = subject_minutes.get(action.subject_id, 0) + minutes
             explanations[action.topic_id] = action.score.reasons
             remaining_by_topic[action.topic_id] -= minutes // quantum
