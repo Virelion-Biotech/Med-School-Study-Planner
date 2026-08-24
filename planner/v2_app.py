@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from .adaptive_cpsat import optimize_adaptive_week
 from .adaptive_db import AdaptiveDB
 from .api import app, db
+from .evidence import summarize_question_evidence
 from .fsrs import FSRSAdapter
 from .irt import evidence_sufficient
 from .mastery import update_bkt
@@ -72,7 +73,7 @@ class KnowledgeComponentRequest(BaseModel):
 def adaptive_status():
     return {
         "version": "2",
-        "engine": "FSRS + BKT + workload + utility/min + CP-SAT",
+        "engine": "FSRS + BKT + workload + evidence-aware utility/min + CP-SAT",
         "legacy_routes_preserved": True,
         "irt_enabled": False,
     }
@@ -131,10 +132,12 @@ def adaptive_topic_state(topic_id: str):
     workload_row = adaptive_db.get_workload(topic_id)
     components = adaptive_db.load_knowledge_components(topic_id)
     knowledge = [adaptive_db.get_knowledge_state(k.id, k.initial_mastery) for k in components]
+    evidence = summarize_question_evidence(adaptive_db, topic_id, datetime.now(timezone.utc))
     return {
         "topic": asdict(topic),
         "fsrs": asdict(fsrs_state) if fsrs_state else None,
         "workload": workload_row,
+        "evidence": asdict(evidence),
         "curriculum_nodes": [asdict(n) for n in adaptive_db.curriculum_nodes_for_topic(topic_id)],
         "knowledge_components": [asdict(k) for k in components],
         "knowledge": [asdict(k) for k in knowledge],
@@ -180,8 +183,13 @@ def adaptive_question(topic_id: str, request: QuestionRequest):
     if request.knowledge_component_id:
         topic.mastery = float(result["mastery_probability"])
         topic.mastery_uncertainty = float(result["uncertainty"])
-        db.update_topic(topic)
-    return result | {"topic": asdict(topic)}
+    evidence = summarize_question_evidence(adaptive_db, topic_id, attempted_at)
+    topic.question_attempts = evidence.attempts
+    topic.recent_question_accuracy = evidence.recent_accuracy
+    topic.question_confidence_gap = max(0.0, evidence.confidence - evidence.recent_accuracy)
+    topic.question_evidence_strength = evidence.evidence_strength
+    db.update_topic(topic)
+    return result | {"topic": asdict(topic), "evidence": asdict(evidence)}
 
 
 @app.post("/v2/topic/{topic_id}/session-observation")
@@ -205,7 +213,12 @@ def adaptive_session_observation(topic_id: str, request: SessionObservationReque
     if states:
         topic.mastery = sum(s.mastery_probability for s in states) / len(states)
         topic.mastery_uncertainty = sum(s.uncertainty for s in states) / len(states)
-        db.update_topic(topic)
+    evidence = summarize_question_evidence(adaptive_db, topic_id, observed_at)
+    topic.question_attempts = evidence.attempts
+    topic.recent_question_accuracy = evidence.recent_accuracy
+    topic.question_confidence_gap = max(0.0, evidence.confidence - evidence.recent_accuracy)
+    topic.question_evidence_strength = evidence.evidence_strength
+    db.update_topic(topic)
     fsrs_rating = 1 if request.performance_score < 0.60 else 2 if request.performance_score < 0.75 else 3 if request.performance_score < 0.90 else 4
     current_fsrs = adaptive_db.get_fsrs_state(topic_id) or fsrs.new_state(topic_id)
     fsrs_state = fsrs.review(current_fsrs, fsrs_rating, observed_at, request.actual_minutes * 60_000)
@@ -215,7 +228,7 @@ def adaptive_session_observation(topic_id: str, request: SessionObservationReque
     topic.next_review_due = fsrs_state.due.date() if fsrs_state.due else topic.next_review_due
     db.update_topic(topic)
     adaptive_db.record_event("session_observation", {"actual_minutes": request.actual_minutes, "performance_score": request.performance_score, "fsrs_rating": fsrs_rating}, topic_id)
-    return {"topic": asdict(topic), "workload": asdict(updated_workload), "fsrs": asdict(fsrs_state), "knowledge": [asdict(s) for s in states]}
+    return {"topic": asdict(topic), "workload": asdict(updated_workload), "fsrs": asdict(fsrs_state), "knowledge": [asdict(s) for s in states], "evidence": asdict(evidence)}
 
 
 @app.get("/v2/topic/{topic_id}/why")
@@ -231,7 +244,7 @@ def adaptive_why(topic_id: str):
     workload = adaptive_db.get_workload(topic_id)
     minutes = workload["predicted_minutes"] if workload else topic.estimated_hours * 60.0
     breakdown = action_utility(topic, subject, date.today(), exam, minutes, current_block=None, topic_block=topic.block_id, weights=UtilityWeights())
-    return asdict(breakdown)
+    return asdict(breakdown) | {"evidence": asdict(summarize_question_evidence(adaptive_db, topic_id, datetime.now(timezone.utc)))}
 
 
 @app.post("/v2/plan")
