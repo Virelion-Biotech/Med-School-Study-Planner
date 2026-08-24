@@ -27,7 +27,14 @@ class AdaptivePlan:
 
 def _session_activity(topic: Topic, day: date) -> ActivityType:
     is_due = bool(topic.next_review_due and topic.next_review_due <= day)
-    return choose_default_activity(is_due, topic.mastery)
+    performance = topic.recent_question_accuracy if topic.question_attempts else None
+    return choose_default_activity(
+        is_due,
+        topic.mastery,
+        performance=performance,
+        confidence_gap=topic.question_confidence_gap,
+        evidence_strength=topic.question_evidence_strength,
+    )
 
 
 def optimize_adaptive_week(
@@ -44,7 +51,7 @@ def optimize_adaptive_week(
     current_block: str | None = None,
     utility_weights: UtilityWeights = UtilityWeights(),
 ) -> AdaptivePlan:
-    """Allocate 15-minute quanta using activity-aware expected learning gain/min with hard constraints."""
+    """Allocate 15-minute quanta using activity- and evidence-aware expected gain/min with hard constraints."""
     workloads = workloads or {}
     blocked_minutes_by_day = blocked_minutes_by_day or {}
     preallocated_subject_minutes = preallocated_subject_minutes or {}
