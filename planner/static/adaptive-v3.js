@@ -53,19 +53,23 @@
       });
       document.querySelector('#adaptive-minimum')?.addEventListener('click', async () => {
         const button = document.querySelector('#adaptive-minimum');
+        let profile = null;
+        let temporaryApplied = false;
         try {
           button?.setAttribute('disabled','disabled');
-          const profile = await api('/profile');
-          const temporary = {...profile, daily_available_minutes:45, max_session_minutes:45};
-          await api('/profile',{method:'PUT',body:JSON.stringify(temporary)});
+          profile = await api('/profile');
+          await api('/profile',{method:'PUT',body:JSON.stringify({...profile, daily_available_minutes:45, max_session_minutes:45})});
+          temporaryApplied = true;
           await api('/replan',{method:'POST',body:JSON.stringify({start_date:today(),days:1,optimizer:true,locked_session_ids:[]})});
-          // Restore the student's normal capacity immediately; only today's plan remains conservative.
           await api('/profile',{method:'PUT',body:JSON.stringify(profile)});
+          temporaryApplied = false;
           await window.load(); window.toast?.('Minimum-day plan created without changing your normal capacity');
         } catch(e) {
           window.toast?.(e.message);
-          try { if (typeof profile !== 'undefined') await api('/profile',{method:'PUT',body:JSON.stringify(profile)}); } catch (_) {}
-        } finally { button?.removeAttribute('disabled'); }
+        } finally {
+          if (temporaryApplied && profile) { try { await api('/profile',{method:'PUT',body:JSON.stringify(profile)}); } catch (_) {} }
+          button?.removeAttribute('disabled');
+        }
       });
       document.querySelector('#adaptive-export')?.addEventListener('click', async () => {
         try {
