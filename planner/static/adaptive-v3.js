@@ -80,7 +80,55 @@
     } catch(e) { console.warn('adaptive-v3', e); }
   }
 
+  function bindAdaptiveCompletion() {
+    const originalOpenSession = window.openSession;
+    if (originalOpenSession && !window.__adaptiveOpenWrapped) {
+      window.openSession = function(id) {
+        window.__adaptiveActiveSessionId = Number(id);
+        return originalOpenSession.apply(this, arguments);
+      };
+      window.__adaptiveOpenWrapped = true;
+    }
+    const originalCompleteSession = window.completeSession;
+    if (originalCompleteSession && !window.__adaptiveCompleteWrapped) {
+      window.completeSession = async function(replanRequested) {
+        const id = window.__adaptiveActiveSessionId;
+        const snapshotSession = (window.__plannerSnapshot?.sessions || []).find(s => Number(s.id) === Number(id));
+        const actual = Number(document.querySelector('#m-min')?.value);
+        const score = Number(document.querySelector('#m-score')?.value);
+        const topicId = snapshotSession?.topic_id;
+        let adaptiveError = null;
+        try {
+          // Let the legacy completion transaction finish first; then feed the same observation
+          // into the adaptive state and replan only once, after adaptive state is current.
+          await originalCompleteSession.call(this, false);
+          if (topicId && Number.isFinite(actual) && Number.isFinite(score) && score >= 0 && score <= 1) {
+            await api(`/v2/topic/${encodeURIComponent(topicId)}/session-observation`, {
+              method:'POST',
+              body:JSON.stringify({actual_minutes:actual, performance_score:score}),
+            });
+          }
+          if (replanRequested) await window.replanWeek();
+          if (topicId) window.toast?.('Session complete · adaptive state updated');
+        } catch (e) {
+          adaptiveError = e;
+          window.toast?.(e.message || 'Adaptive update failed');
+        } finally {
+          window.__adaptiveActiveSessionId = null;
+        }
+        return adaptiveError ? undefined : true;
+      };
+      window.__adaptiveCompleteWrapped = true;
+    }
+  }
+
   const originalRender = window.render;
-  window.render = function(...args) { const result = originalRender?.apply(this,args); setTimeout(renderPanel, 0); return result; };
-  window.addEventListener('load', () => setTimeout(renderPanel, 100));
+  window.render = function(...args) {
+    bindAdaptiveCompletion();
+    const result = originalRender?.apply(this,args);
+    setTimeout(() => { bindAdaptiveCompletion(); renderPanel(); }, 0);
+    return result;
+  };
+  bindAdaptiveCompletion();
+  window.addEventListener('load', () => { bindAdaptiveCompletion(); setTimeout(renderPanel, 100); });
 })();
