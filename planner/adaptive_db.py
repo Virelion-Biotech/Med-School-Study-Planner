@@ -33,6 +33,11 @@ class AdaptiveDB:
                     source TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_curriculum_parent ON curriculum_nodes(parent_id);
+                CREATE TABLE IF NOT EXISTS topic_curriculum_links (
+                    topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+                    node_id TEXT NOT NULL REFERENCES curriculum_nodes(id) ON DELETE CASCADE,
+                    PRIMARY KEY(topic_id,node_id)
+                );
                 CREATE TABLE IF NOT EXISTS knowledge_components (
                     id TEXT PRIMARY KEY,
                     topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
@@ -102,6 +107,24 @@ class AdaptiveDB:
     def load_curriculum_nodes(self) -> list[CurriculumNode]:
         with self.db.connection() as conn:
             rows = conn.execute("SELECT * FROM curriculum_nodes ORDER BY source,id").fetchall()
+        return [CurriculumNode(r["id"], r["name"], r["node_type"], r["parent_id"], r["source"]) for r in rows]
+
+    def link_topic_to_nodes(self, topic_id: str, node_ids: list[str]) -> None:
+        with self.db.connection() as conn:
+            conn.execute("DELETE FROM topic_curriculum_links WHERE topic_id=?", (topic_id,))
+            for node_id in dict.fromkeys(node_ids):
+                if conn.execute("SELECT 1 FROM curriculum_nodes WHERE id=?", (node_id,)).fetchone() is None:
+                    raise ValueError(f"unknown curriculum node: {node_id}")
+                conn.execute("INSERT INTO topic_curriculum_links(topic_id,node_id) VALUES (?,?)", (topic_id, node_id))
+
+    def curriculum_nodes_for_topic(self, topic_id: str) -> list[CurriculumNode]:
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                """SELECT n.* FROM curriculum_nodes n
+                JOIN topic_curriculum_links l ON l.node_id=n.id
+                WHERE l.topic_id=? ORDER BY n.source,n.id""",
+                (topic_id,),
+            ).fetchall()
         return [CurriculumNode(r["id"], r["name"], r["node_type"], r["parent_id"], r["source"]) for r in rows]
 
     def save_knowledge_components(self, components: list[KnowledgeComponent]) -> None:
