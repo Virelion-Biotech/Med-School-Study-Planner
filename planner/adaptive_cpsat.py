@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 import math
 
-from .models import Exam, SessionType, StudySession, Subject, Topic, UserProfile, best_exam_for_topic
+from .activity import choose_default_activity
+from .models import ActivityType, Exam, SessionType, StudySession, Subject, Topic, UserProfile, best_exam_for_topic
 from .utility import UtilityWeights, action_utility
 
 try:
@@ -21,6 +22,11 @@ class AdaptivePlan:
     unfulfilled_exam_coverage: dict[str, int]
     explanations: dict[str, tuple[str, ...]]
     status: str
+
+
+def _session_activity(topic: Topic, day: date) -> ActivityType:
+    is_due = bool(topic.next_review_due and topic.next_review_due <= day)
+    return choose_default_activity(is_due, topic.mastery)
 
 
 def optimize_adaptive_week(
@@ -101,14 +107,11 @@ def optimize_adaptive_week(
     for d in range(days):
         model.Add(sum(v for (_, dd), v in vars_.items() if dd == d) <= capacities[d])
 
-    # Do not schedule more time for a topic than its remaining estimated workload.
     for topic_id, remaining_target in topic_targets.items():
         topic_vars = [v for (tid, _), v in vars_.items() if tid == topic_id]
         if topic_vars:
             model.Add(sum(topic_vars) <= remaining_target)
 
-    # Weekly fairness is a minimum guaranteed allocation, softened only when the
-    # available horizon physically cannot satisfy it.
     total_capacity = sum(capacities.values())
     floor_target = max(0, profile.minimum_subject_minutes_week // quantum)
     fair_cap = total_capacity // max(1, len(active))
@@ -162,7 +165,8 @@ def optimize_adaptive_week(
         topic = topic_map[topic_id]
         day = start + timedelta(days=d)
         session_type = SessionType.REVIEW if topic.next_review_due and topic.next_review_due <= day else SessionType.NEW
-        sessions.append(StudySession(day, topic_id, minutes, session_type=session_type))
+        activity = _session_activity(topic, day)
+        sessions.append(StudySession(day, topic_id, minutes, session_type=session_type, activity=activity))
         subject_minutes[topic.subject_id] += minutes
         if topic_id in covered:
             covered[topic_id] += blocks
@@ -209,7 +213,9 @@ def _greedy_fallback(
             minutes -= minutes % quantum
             if minutes <= 0:
                 continue
-            sessions.append(StudySession(day, action.topic_id, minutes, session_type=action.session_type))
+            topic = next((t for t in topics if t.id == action.topic_id), None)
+            activity = _session_activity(topic, day) if topic else ActivityType.MIXED
+            sessions.append(StudySession(day, action.topic_id, minutes, session_type=action.session_type, activity=activity))
             subject_minutes[action.subject_id] = subject_minutes.get(action.subject_id, 0) + minutes
             explanations[action.topic_id] = action.score.reasons
             remaining_by_topic[action.topic_id] -= minutes // quantum
