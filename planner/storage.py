@@ -33,7 +33,11 @@ CREATE TABLE IF NOT EXISTS topics (
  block_id TEXT,
  mastery_uncertainty REAL NOT NULL DEFAULT 1.0,
  memory_retrievability REAL,
- workload_confidence REAL NOT NULL DEFAULT 0.25);
+ workload_confidence REAL NOT NULL DEFAULT 0.25,
+ question_attempts INTEGER NOT NULL DEFAULT 0,
+ recent_question_accuracy REAL NOT NULL DEFAULT 0.5,
+ question_confidence_gap REAL NOT NULL DEFAULT 0.0,
+ question_evidence_strength REAL NOT NULL DEFAULT 0.0);
 CREATE TABLE IF NOT EXISTS exams (
  id TEXT PRIMARY KEY, exam_date TEXT NOT NULL, subject_ids_json TEXT NOT NULL,
  topic_ids_json TEXT NOT NULL, weight REAL NOT NULL);
@@ -63,10 +67,12 @@ TOPIC_MIGRATION_COLUMNS = {
     "mastery_uncertainty": "REAL NOT NULL DEFAULT 1.0",
     "memory_retrievability": "REAL",
     "workload_confidence": "REAL NOT NULL DEFAULT 0.25",
+    "question_attempts": "INTEGER NOT NULL DEFAULT 0",
+    "recent_question_accuracy": "REAL NOT NULL DEFAULT 0.5",
+    "question_confidence_gap": "REAL NOT NULL DEFAULT 0.0",
+    "question_evidence_strength": "REAL NOT NULL DEFAULT 0.0",
 }
-SESSION_MIGRATION_COLUMNS = {
-    "activity_type": "TEXT NOT NULL DEFAULT 'mixed'",
-}
+SESSION_MIGRATION_COLUMNS = {"activity_type": "TEXT NOT NULL DEFAULT 'mixed'"}
 
 
 class StudyDB:
@@ -156,25 +162,25 @@ class StudyDB:
                     id, subject_id, name, complexity, estimated_hours, mastery,
                     last_studied, next_review_due, self_difficulty, volume, cognitive_load,
                     knowledge_component_ids_json, curriculum_node_ids_json, block_id,
-                    mastery_uncertainty, memory_retrievability, workload_confidence
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    mastery_uncertainty, memory_retrievability, workload_confidence,
+                    question_attempts, recent_question_accuracy, question_confidence_gap,
+                    question_evidence_strength
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
-                    subject_id=excluded.subject_id,
-                    name=excluded.name,
-                    complexity=excluded.complexity,
-                    estimated_hours=excluded.estimated_hours,
-                    mastery=excluded.mastery,
-                    last_studied=excluded.last_studied,
-                    next_review_due=excluded.next_review_due,
-                    self_difficulty=excluded.self_difficulty,
-                    volume=excluded.volume,
+                    subject_id=excluded.subject_id, name=excluded.name, complexity=excluded.complexity,
+                    estimated_hours=excluded.estimated_hours, mastery=excluded.mastery,
+                    last_studied=excluded.last_studied, next_review_due=excluded.next_review_due,
+                    self_difficulty=excluded.self_difficulty, volume=excluded.volume,
                     cognitive_load=excluded.cognitive_load,
                     knowledge_component_ids_json=excluded.knowledge_component_ids_json,
-                    curriculum_node_ids_json=excluded.curriculum_node_ids_json,
-                    block_id=excluded.block_id,
+                    curriculum_node_ids_json=excluded.curriculum_node_ids_json, block_id=excluded.block_id,
                     mastery_uncertainty=excluded.mastery_uncertainty,
                     memory_retrievability=excluded.memory_retrievability,
-                    workload_confidence=excluded.workload_confidence
+                    workload_confidence=excluded.workload_confidence,
+                    question_attempts=excluded.question_attempts,
+                    recent_question_accuracy=excluded.recent_question_accuracy,
+                    question_confidence_gap=excluded.question_confidence_gap,
+                    question_evidence_strength=excluded.question_evidence_strength
             """, (
                 topic.id, topic.subject_id, topic.name, topic.complexity, topic.estimated_hours, topic.mastery,
                 topic.last_studied.isoformat() if topic.last_studied else None,
@@ -182,6 +188,8 @@ class StudyDB:
                 topic.self_difficulty, topic.volume, topic.cognitive_load,
                 json.dumps(topic.knowledge_component_ids), json.dumps(topic.curriculum_node_ids), topic.block_id,
                 topic.mastery_uncertainty, topic.memory_retrievability, topic.workload_confidence,
+                topic.question_attempts, topic.recent_question_accuracy, topic.question_confidence_gap,
+                topic.question_evidence_strength,
             ))
 
     def delete_topic(self, topic_id: str) -> None:
@@ -296,6 +304,10 @@ class StudyDB:
             curriculum_node_ids=tuple(json.loads(row.get("curriculum_node_ids_json") or "[]")),
             block_id=row.get("block_id"), mastery_uncertainty=float(row.get("mastery_uncertainty") or 1.0),
             memory_retrievability=row.get("memory_retrievability"), workload_confidence=float(row.get("workload_confidence") or 0.25),
+            question_attempts=int(row.get("question_attempts") or 0),
+            recent_question_accuracy=float(row.get("recent_question_accuracy") or 0.5),
+            question_confidence_gap=float(row.get("question_confidence_gap") or 0.0),
+            question_evidence_strength=float(row.get("question_evidence_strength") or 0.0),
         )
 
     @classmethod
