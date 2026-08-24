@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 import math
 
@@ -22,7 +22,6 @@ def _decay(mastery: float, elapsed_days: float, forgetting_rate: float) -> float
     if elapsed_days <= 0:
         return clamp(mastery)
     retention = math.exp(-forgetting_rate * elapsed_days)
-    # Forgetting moves probability toward the uninformed 0.5 baseline rather than zero.
     return clamp(0.5 + (mastery - 0.5) * retention)
 
 
@@ -57,7 +56,6 @@ def update_bkt(
     posterior = _posterior_after_observation(prior, correct, params)
     learned = posterior + (1.0 - posterior) * params.learn
     observations = state.observations + 1
-    # Uncertainty contracts with evidence but never reaches an unjustified zero.
     uncertainty = max(0.05, 1.0 / math.sqrt(observations + 1))
     return replace(
         state,
