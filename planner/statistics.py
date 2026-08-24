@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import random
 
 
 @dataclass(frozen=True)
@@ -27,11 +28,34 @@ def paired_effect(reference: list[float], candidate: list[float]) -> PairedEffec
     sd = math.sqrt(max(variance, 0.0))
     se = sd / math.sqrt(n)
     dz = mean_difference / sd if sd > 0 else 0.0
-    # Normal approximation keeps this dependency-free and is adequate for the
-    # simulator's large paired populations; it is explicitly not a claim of
-    # exact small-sample inference.
     margin = 1.96 * se
     return PairedEffect(n, mean_difference, sd, se, dz, mean_difference - margin, mean_difference + margin)
+
+
+def paired_bootstrap_ci(
+    reference: list[float],
+    candidate: list[float],
+    *,
+    resamples: int = 4000,
+    seed: int = 17,
+) -> tuple[float, float]:
+    if len(reference) != len(candidate):
+        raise ValueError("paired samples must have equal length")
+    if len(reference) < 2:
+        raise ValueError("at least two paired observations are required")
+    if resamples < 100:
+        raise ValueError("resamples must be at least 100")
+    rng = random.Random(seed)
+    differences = [b - a for a, b in zip(reference, candidate)]
+    n = len(differences)
+    samples: list[float] = []
+    for _ in range(resamples):
+        sample = [differences[rng.randrange(n)] for _ in range(n)]
+        samples.append(sum(sample) / n)
+    samples.sort()
+    lo = samples[int(0.025 * (len(samples) - 1))]
+    hi = samples[int(0.975 * (len(samples) - 1))]
+    return lo, hi
 
 
 def paired_from_metrics(metrics, field: str, reference: str, candidate: str) -> PairedEffect:
