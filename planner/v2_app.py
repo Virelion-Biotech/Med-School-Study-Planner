@@ -11,10 +11,11 @@ from .adaptive_db import AdaptiveDB
 from .api import app, db
 from .fsrs import FSRSAdapter
 from .irt import evidence_sufficient
-from .models import PriorityWeights
+from .mastery import update_bkt
+from .models import Topic
 from .questions import QuestionOutcome, record_question
 from .readiness import readiness_from_signals
-from .state import ActivityType
+from .state import StudentKnowledgeState
 from .utility import UtilityWeights, action_utility
 from .workload import WorkloadEstimate, initial_workload, update_workload
 
@@ -44,6 +45,12 @@ class QuestionRequest(BaseModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
     knowledge_component_id: str | None = Field(default=None, max_length=200)
     attempted_at: datetime | None = None
+
+
+class SessionObservationRequest(BaseModel):
+    actual_minutes: int = Field(ge=0)
+    performance_score: float = Field(ge=0, le=1)
+    observed_at: datetime | None = None
 
 
 @app.get("/v2/status")
@@ -115,6 +122,43 @@ def adaptive_question(topic_id: str, request: QuestionRequest):
         topic.mastery_uncertainty = float(result["uncertainty"])
         db.update_topic(topic)
     return result | {"topic": asdict(topic)}
+
+
+@app.post("/v2/topic/{topic_id}/session-observation")
+def adaptive_session_observation(topic_id: str, request: SessionObservationRequest):
+    topic = db.get_topic(topic_id)
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    observed_at = request.observed_at or datetime.now(timezone.utc)
+    # Binary BKT evidence is derived conservatively from a session-level threshold.
+    # Question attempts remain the preferred evidence source for fine-grained KCs.
+    components = adaptive_db.load_knowledge_components(topic_id)
+    states: list[StudentKnowledgeState] = []
+    for kc in components:
+        state = adaptive_db.get_knowledge_state(kc.id, kc.initial_mastery)
+        state = update_bkt(state, request.performance_score >= 0.70, observed_at)
+        adaptive_db.save_knowledge_state(state)
+        states.append(state)
+    # Completion time calibrates the topic workload immediately, without waiting for a manual recalibration.
+    current_row = adaptive_db.get_workload(topic_id)
+    estimate = WorkloadEstimate(**current_row) if current_row else initial_workload(topic)
+    updated_workload = update_workload(estimate, [request.actual_minutes])
+    adaptive_db.save_workload(updated_workload)
+    topic.workload_confidence = updated_workload.confidence
+    if states:
+        topic.mastery = sum(s.mastery_probability for s in states) / len(states)
+        topic.mastery_uncertainty = sum(s.uncertainty for s in states) / len(states)
+        db.update_topic(topic)
+    fsrs_rating = 1 if request.performance_score < 0.60 else 2 if request.performance_score < 0.75 else 3 if request.performance_score < 0.90 else 4
+    current_fsrs = adaptive_db.get_fsrs_state(topic_id) or fsrs.new_state(topic_id)
+    fsrs_state = fsrs.review(current_fsrs, fsrs_rating, observed_at, request.actual_minutes * 60_000)
+    fsrs_state.retrievability = fsrs.retrievability(fsrs_state, observed_at)
+    adaptive_db.save_fsrs_state(fsrs_state)
+    topic.memory_retrievability = fsrs_state.retrievability
+    topic.next_review_due = fsrs_state.due.date() if fsrs_state.due else topic.next_review_due
+    db.update_topic(topic)
+    adaptive_db.record_event("session_observation", {"actual_minutes": request.actual_minutes, "performance_score": request.performance_score, "fsrs_rating": fsrs_rating}, topic_id)
+    return {"topic": asdict(topic), "workload": asdict(updated_workload), "fsrs": asdict(fsrs_state), "knowledge": [asdict(s) for s in states]}
 
 
 @app.get("/v2/topic/{topic_id}/why")
