@@ -15,7 +15,7 @@ from .mastery import update_bkt
 from .models import Topic
 from .questions import QuestionOutcome, record_question
 from .readiness import readiness_from_signals
-from .state import StudentKnowledgeState
+from .state import CurriculumNode, KnowledgeComponent, StudentKnowledgeState
 from .utility import UtilityWeights, action_utility
 from .workload import WorkloadEstimate, initial_workload, update_workload
 
@@ -53,6 +53,22 @@ class SessionObservationRequest(BaseModel):
     observed_at: datetime | None = None
 
 
+class CurriculumNodeRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=300)
+    node_type: str = Field(min_length=1, max_length=100)
+    parent_id: str | None = Field(default=None, max_length=200)
+    source: str = Field(default="personal", min_length=1, max_length=100)
+
+
+class KnowledgeComponentRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=200)
+    topic_id: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=300)
+    initial_mastery: float = Field(default=0.50, ge=0, le=1)
+    curriculum_node_ids: list[str] = Field(default_factory=list)
+
+
 @app.get("/v2/status")
 def adaptive_status():
     return {
@@ -60,6 +76,50 @@ def adaptive_status():
         "engine": "FSRS + BKT + workload + utility/min + CP-SAT",
         "legacy_routes_preserved": True,
         "irt_enabled": False,
+    }
+
+
+@app.get("/v2/curriculum/nodes")
+def get_curriculum_nodes(source: str | None = None):
+    nodes = adaptive_db.load_curriculum_nodes()
+    if source:
+        nodes = [node for node in nodes if node.source == source]
+    return {"nodes": [asdict(node) for node in nodes]}
+
+
+@app.post("/v2/curriculum/nodes")
+def save_curriculum_node(request: CurriculumNodeRequest):
+    node = CurriculumNode(request.id, request.name, request.node_type, request.parent_id, request.source)
+    if request.parent_id and request.parent_id not in {n.id for n in adaptive_db.load_curriculum_nodes()}:
+        raise HTTPException(status_code=400, detail="parent curriculum node does not exist")
+    adaptive_db.save_curriculum_nodes([node])
+    return {"status": "saved", "node": asdict(node)}
+
+
+@app.post("/v2/knowledge-components")
+def save_knowledge_component(request: KnowledgeComponentRequest):
+    if db.get_topic(request.topic_id) is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    try:
+        adaptive_db.save_knowledge_components([KnowledgeComponent(request.id, request.topic_id, request.name, request.initial_mastery)])
+        adaptive_db.link_topic_to_nodes(request.topic_id, request.curriculum_node_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "status": "saved",
+        "component": {"id": request.id, "topic_id": request.topic_id, "name": request.name, "initial_mastery": request.initial_mastery},
+        "curriculum_nodes": [asdict(n) for n in adaptive_db.curriculum_nodes_for_topic(request.topic_id)],
+    }
+
+
+@app.get("/v2/topic/{topic_id}/curriculum")
+def topic_curriculum(topic_id: str):
+    if db.get_topic(topic_id) is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return {
+        "topic_id": topic_id,
+        "nodes": [asdict(n) for n in adaptive_db.curriculum_nodes_for_topic(topic_id)],
+        "knowledge_components": [asdict(k) for k in adaptive_db.load_knowledge_components(topic_id)],
     }
 
 
@@ -76,6 +136,7 @@ def adaptive_topic_state(topic_id: str):
         "topic": asdict(topic),
         "fsrs": asdict(fsrs_state) if fsrs_state else None,
         "workload": workload_row,
+        "curriculum_nodes": [asdict(n) for n in adaptive_db.curriculum_nodes_for_topic(topic_id)],
         "knowledge_components": [asdict(k) for k in components],
         "knowledge": [asdict(k) for k in knowledge],
     }
@@ -130,8 +191,6 @@ def adaptive_session_observation(topic_id: str, request: SessionObservationReque
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
     observed_at = request.observed_at or datetime.now(timezone.utc)
-    # Binary BKT evidence is derived conservatively from a session-level threshold.
-    # Question attempts remain the preferred evidence source for fine-grained KCs.
     components = adaptive_db.load_knowledge_components(topic_id)
     states: list[StudentKnowledgeState] = []
     for kc in components:
@@ -139,7 +198,6 @@ def adaptive_session_observation(topic_id: str, request: SessionObservationReque
         state = update_bkt(state, request.performance_score >= 0.70, observed_at)
         adaptive_db.save_knowledge_state(state)
         states.append(state)
-    # Completion time calibrates the topic workload immediately, without waiting for a manual recalibration.
     current_row = adaptive_db.get_workload(topic_id)
     estimate = WorkloadEstimate(**current_row) if current_row else initial_workload(topic)
     updated_workload = update_workload(estimate, [request.actual_minutes])
