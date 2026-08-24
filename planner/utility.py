@@ -17,6 +17,14 @@ class UtilityWeights:
     workload: float = 0.5
     block_relevance: float = 0.35
     activity_fit: float = 0.55
+    evidence_fit: float = 0.30
+
+
+@dataclass(frozen=True)
+class EvidenceSignal:
+    recent_accuracy: float = 0.5
+    confidence_gap: float = 0.0
+    evidence_strength: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -30,6 +38,7 @@ class UtilityBreakdown:
     workload: float
     block_relevance: float
     activity_fit: float
+    evidence_fit: float
     activity: ActivityType
     reasons: tuple[str, ...]
 
@@ -51,7 +60,6 @@ def expected_retrievability(stability_days: float | None, elapsed_days: float | 
 
 def _activity_fit(activity: ActivityType, mastery_gap: float, retention_gap: float, blueprint: float) -> float:
     profile = activity_profile(activity)
-    # Practice need peaks after basic acquisition but before full mastery.
     practice_need = clamp(1.0 - abs(0.55 - (1.0 - mastery_gap)) / 0.55)
     raw = (
         profile.learning_gain * mastery_gap
@@ -59,6 +67,22 @@ def _activity_fit(activity: ActivityType, mastery_gap: float, retention_gap: flo
         + profile.practice_gain * practice_need * (0.5 + 0.5 * blueprint)
     ) / 3.0
     return clamp(raw)
+
+
+def _evidence_fit(activity: ActivityType, evidence: EvidenceSignal) -> float:
+    accuracy_gap = clamp(1.0 - evidence.recent_accuracy)
+    confidence_gap = clamp(max(0.0, evidence.confidence_gap))
+    if activity is ActivityType.QUESTIONS:
+        target = 0.70 * accuracy_gap + 0.30 * confidence_gap
+    elif activity is ActivityType.LEARN:
+        target = 0.70 * accuracy_gap
+    elif activity is ActivityType.RECALL:
+        target = 0.45 * accuracy_gap
+    elif activity is ActivityType.REVIEW:
+        target = 0.35 * (1.0 - accuracy_gap)
+    else:
+        target = 0.30
+    return clamp(target * (0.25 + 0.75 * evidence.evidence_strength))
 
 
 def action_utility(
@@ -72,8 +96,10 @@ def action_utility(
     current_block: str | None = None,
     topic_block: str | None = None,
     activity: ActivityType = ActivityType.MIXED,
+    evidence: EvidenceSignal | None = None,
     weights: UtilityWeights = UtilityWeights(),
 ) -> UtilityBreakdown:
+    evidence = evidence or EvidenceSignal()
     mastery = clamp(topic.mastery if mastery_probability is None else mastery_probability)
     retention = clamp(1.0 if retrievability is None else retrievability)
     urgency = smooth_exam_urgency(today, exam.date if exam else None)
@@ -83,6 +109,7 @@ def action_utility(
     mastery_gap = 1.0 - mastery
     retention_gap = 1.0 - retention
     activity_fit = _activity_fit(activity, mastery_gap, retention_gap, blueprint)
+    evidence_fit = _evidence_fit(activity, evidence)
     total = (
         weights.exam_urgency * urgency
         + weights.mastery_gap * mastery_gap
@@ -91,6 +118,7 @@ def action_utility(
         + weights.workload * workload
         + weights.block_relevance * block
         + weights.activity_fit * activity_fit
+        + weights.evidence_fit * evidence_fit
     )
     per_minute = total / max(expected_minutes, 1.0)
     reasons: list[str] = []
@@ -100,21 +128,13 @@ def action_utility(
         reasons.append(f"estimated mastery is {round(mastery * 100)}%")
     if retention <= 0.60:
         reasons.append(f"predicted retention is {round(retention * 100)}%")
+    if evidence.evidence_strength > 0:
+        reasons.append(f"recent question accuracy is {round(evidence.recent_accuracy * 100)}%")
+        if evidence.confidence_gap >= 0.20:
+            reasons.append("confidence is higher than observed performance")
     if blueprint >= 0.60:
         reasons.append("high exam blueprint weight")
     if block:
         reasons.append("matches the current block")
     reasons.append(f"activity fit: {activity.value}")
-    return UtilityBreakdown(
-        total,
-        per_minute,
-        urgency,
-        mastery_gap,
-        retention_gap,
-        blueprint,
-        workload,
-        block,
-        activity_fit,
-        activity,
-        tuple(reasons),
-    )
+    return UtilityBreakdown(total, per_minute, urgency, mastery_gap, retention_gap, blueprint, workload, block, activity_fit, evidence_fit, activity, tuple(reasons))
