@@ -18,6 +18,7 @@ from .export import sessions_csv, snapshot_json
 from .models import Exam, PriorityWeights, Subject, Topic, UserProfile, best_exam_for_topic
 from .optimizer import optimize_week
 from .presets import step1_preset
+from .session_learning import AdaptiveSessionLearner
 from .storage import CURRENT_USER, StudyDB
 from .weekly import generate_balanced_week
 
@@ -26,6 +27,7 @@ allowed_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http:
 app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_origin_regex=r"https://[A-Za-z0-9-]+\.github\.io", allow_credentials=False, allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], allow_headers=["*"])
 
 db = StudyDB(os.getenv("STUDY_PLANNER_DB", "study_planner.db"))
+adaptive_session_learner = AdaptiveSessionLearner(db)
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -235,7 +237,7 @@ def plan(request: PlanRequest):
         session_ids = db.save_sessions(result.sessions)
     sessions = []
     for index, session in enumerate(result.sessions):
-        payload = asdict(session) | {"session_type": session.session_type.value}
+        payload = asdict(session) | {"session_type": session.session_type.value, "activity_type": session.activity.value}
         if request.persist:
             payload["session_id"] = session_ids[index]
         sessions.append(payload)
@@ -248,17 +250,21 @@ def complete(session_id: int, request: CompleteRequest):
     if topic is None:
         raise HTTPException(status_code=404, detail="Session or topic not found")
     completed_on = request.completed_on or date.today()
-    memory = db.get_memory_state(topic.id)
-    updated, new_memory = update_topic_from_session(topic, request.actual_minutes, request.performance_score, completed_on, memory)
     try:
         db.complete_session(session_id, request.actual_minutes, request.performance_score)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    db.update_topic(updated)
-    db.save_memory_state(topic.id, new_memory)
-    return {"topic": asdict(updated), "memory": asdict(new_memory)}
+
+    # Keep the legacy memory state as a compatibility mirror while making the V2
+    # learner the single authoritative adaptive update path.
+    try:
+        adaptive = adaptive_session_learner.observe(topic, request.actual_minutes, request.performance_score, completed_on)
+    except Exception as exc:  # pragma: no cover - defensive boundary around optional adaptive state
+        return {"topic": asdict(db.get_topic(topic.id) or topic), "adaptive_error": str(exc)}
+
+    return adaptive | {"status": "completed", "session_id": session_id}
 
 
 @app.post("/sessions/{session_id}/reschedule")
@@ -337,7 +343,7 @@ def replan(request: ReplanRequest):
     db.delete_uncompleted_sessions_in_range(request.start_date, end, set(locked))
     filtered = [s for s in result.sessions if (s.date.isoformat(), s.topic_id) not in locked_keys]
     ids = db.save_sessions(filtered)
-    sessions = [asdict(s) | {"session_type": s.session_type.value, "session_id": ids[i]} for i, s in enumerate(filtered)]
+    sessions = [asdict(s) | {"session_type": s.session_type.value, "activity_type": s.activity.value, "session_id": ids[i]} for i, s in enumerate(filtered)]
     subject_minutes = dict(result.subject_minutes)
     for sid, mins in locked_subject_minutes.items():
         subject_minutes[sid] = subject_minutes.get(sid, 0) + mins
