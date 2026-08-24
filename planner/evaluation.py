@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 import random
 
 from .adaptive_cpsat import optimize_adaptive_week
@@ -25,13 +25,13 @@ def _coverage(sessions, topic_ids: set[str]) -> float:
     return len(covered & topic_ids) / len(topic_ids)
 
 
-def _fairness_gap(sessions, subjects: list[Subject], floor: int) -> int:
+def _fairness_gap(sessions, subjects: list[Subject], topics: list[Topic], floor: int) -> int:
+    topic_to_subject = {t.id: t.subject_id for t in topics}
     minutes = {s.id: 0 for s in subjects}
-    topic_to_subject = {}
     for session in sessions:
-        topic_to_subject.setdefault(session.topic_id, None)
-    # The evaluator receives subject IDs separately only through the synthetic fixtures;
-    # unassigned topics contribute no fairness debt.
+        subject_id = topic_to_subject.get(session.topic_id)
+        if subject_id in minutes:
+            minutes[subject_id] += session.planned_minutes
     return max(0, floor - min(minutes.values(), default=floor))
 
 
@@ -53,7 +53,7 @@ def compare_planners(
             sum(s.planned_minutes for s in legacy),
             _coverage(legacy, topic_ids),
             0.0,
-            _fairness_gap(legacy, subjects, profile.minimum_subject_minutes_week),
+            _fairness_gap(legacy, subjects, topics, profile.minimum_subject_minutes_week),
         ),
         SimulationResult(
             "adaptive_cpsat",
