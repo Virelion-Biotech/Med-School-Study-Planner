@@ -6,6 +6,7 @@ import math
 
 from .activity import choose_default_activity
 from .models import ActivityType, Exam, SessionType, StudySession, Subject, Topic, UserProfile, best_exam_for_topic
+from .session_splitter import split_sessions
 from .utility import UtilityWeights, action_utility
 
 try:
@@ -142,8 +143,6 @@ def optimize_adaptive_week(
             possible = sum(v.Proto().domain[-1] for v in relevant)
             model.Add(sum(relevant) >= min(remaining, possible))
 
-    # Review demand grows with overdue/due-topic prevalence rather than always consuming
-    # the same fixed fraction of the week. This protects new learning when few reviews are due.
     due_topics = [t for t in topics if t.next_review_due and t.next_review_due <= start]
     due_ratio = len(due_topics) / max(1, len([t for t in topics if t.subject_id in subject_map]))
     dynamic_review_fraction = min(0.85, profile.review_fraction * (0.50 + 1.50 * due_ratio))
@@ -160,7 +159,7 @@ def optimize_adaptive_week(
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return _greedy_fallback(subjects, topics, exams, profile, start, days, workloads, blocked_minutes_by_day, current_block, utility_weights, preallocated_topic_minutes)
 
-    sessions: list[StudySession] = []
+    allocations: list[StudySession] = []
     subject_minutes = {s.id: 0 for s in active}
     covered = {tid: preallocated_topic_minutes.get(tid, 0) // quantum for tid in coverage}
     for (topic_id, d), var in vars_.items():
@@ -172,7 +171,7 @@ def optimize_adaptive_week(
         day = start + timedelta(days=d)
         session_type = SessionType.REVIEW if topic.next_review_due and topic.next_review_due <= day else SessionType.NEW
         activity = _session_activity(topic, day)
-        sessions.append(StudySession(day, topic_id, minutes, session_type=session_type, activity=activity))
+        allocations.append(StudySession(day, topic_id, minutes, session_type=session_type, activity=activity))
         subject_minutes[topic.subject_id] += minutes
         if topic_id in covered:
             covered[topic_id] += blocks
@@ -186,7 +185,8 @@ def optimize_adaptive_week(
         for topic_id, (_, demand, exam_id) in coverage.items()
         if max(0, demand - covered.get(topic_id, 0))
     }
-    return AdaptivePlan(sorted(sessions, key=lambda s: (s.date, s.topic_id)), subject_minutes, unfulfilled_floor, unfulfilled_exam, explanations, "optimal" if status == cp_model.OPTIMAL else "feasible")
+    sessions = split_sessions(sorted(allocations, key=lambda s: (s.date, s.topic_id)))
+    return AdaptivePlan(sessions, subject_minutes, unfulfilled_floor, unfulfilled_exam, explanations, "optimal" if status == cp_model.OPTIMAL else "feasible")
 
 
 def _greedy_fallback(
@@ -198,7 +198,7 @@ def _greedy_fallback(
 
     preallocated_topic_minutes = preallocated_topic_minutes or {}
     quantum = 15
-    sessions: list[StudySession] = []
+    allocations: list[StudySession] = []
     subject_minutes = {s.id: 0 for s in subjects}
     explanations: dict[str, tuple[str, ...]] = {}
     remaining_by_topic = {
@@ -219,9 +219,9 @@ def _greedy_fallback(
             minutes -= minutes % quantum
             if minutes <= 0:
                 continue
-            sessions.append(StudySession(day, action.topic_id, minutes, session_type=action.session_type, activity=action.activity))
+            allocations.append(StudySession(day, action.topic_id, minutes, session_type=action.session_type, activity=action.activity))
             subject_minutes[action.subject_id] = subject_minutes.get(action.subject_id, 0) + minutes
             explanations[action.topic_id] = action.score.reasons
             remaining_by_topic[action.topic_id] -= minutes // quantum
             remaining -= minutes
-    return AdaptivePlan(sessions, subject_minutes, {}, {}, explanations, "greedy")
+    return AdaptivePlan(split_sessions(allocations), subject_minutes, {}, {}, explanations, "greedy")
