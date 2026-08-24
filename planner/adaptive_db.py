@@ -11,11 +11,7 @@ from .storage import StudyDB
 
 
 class AdaptiveDB:
-    """Persistence boundary for V2 learning state.
-
-    Uses the existing StudyDB connection so legacy data and V2 state share the
-    same user-isolated SQLite database without rewriting the legacy schema.
-    """
+    """Persistence boundary for V2 learning state."""
 
     def __init__(self, db: StudyDB) -> None:
         self.db = db
@@ -33,11 +29,22 @@ class AdaptiveDB:
                     source TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_curriculum_parent ON curriculum_nodes(parent_id);
+                CREATE TABLE IF NOT EXISTS curriculum_snapshots (
+                    source TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    nodes_json TEXT NOT NULL,
+                    issues_json TEXT NOT NULL,
+                    PRIMARY KEY(source, version)
+                );
+                CREATE INDEX IF NOT EXISTS idx_curriculum_snapshot_source ON curriculum_snapshots(source, created_at);
                 CREATE TABLE IF NOT EXISTS topic_curriculum_links (
                     topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
                     node_id TEXT NOT NULL REFERENCES curriculum_nodes(id) ON DELETE CASCADE,
                     PRIMARY KEY(topic_id,node_id)
                 );
+                CREATE INDEX IF NOT EXISTS idx_topic_curriculum_node ON topic_curriculum_links(node_id);
                 CREATE TABLE IF NOT EXISTS knowledge_components (
                     id TEXT PRIMARY KEY,
                     topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
@@ -103,6 +110,40 @@ class AdaptiveDB:
                     parent_id=excluded.parent_id,source=excluded.source""",
                     (node.id, node.name, node.node_type, node.parent_id, node.source),
                 )
+
+    def save_curriculum_snapshot(self, snapshot: Any) -> None:
+        nodes = [asdict(node) for node in snapshot.nodes]
+        issues = [asdict(issue) for issue in snapshot.issues]
+        with self.db.connection() as conn:
+            conn.execute(
+                """INSERT INTO curriculum_snapshots(source,version,fingerprint,nodes_json,issues_json)
+                VALUES (?,?,?,?,?)
+                ON CONFLICT(source,version) DO UPDATE SET fingerprint=excluded.fingerprint,
+                nodes_json=excluded.nodes_json,issues_json=excluded.issues_json""",
+                (snapshot.source, snapshot.version, snapshot.fingerprint,
+                 json.dumps(nodes, sort_keys=True), json.dumps(issues, sort_keys=True)),
+            )
+
+    def list_curriculum_snapshots(self, source: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT source,version,fingerprint,created_at,nodes_json,issues_json FROM curriculum_snapshots"
+        args: tuple[Any, ...] = ()
+        if source:
+            query += " WHERE source=?"
+            args = (source,)
+        query += " ORDER BY created_at DESC, source, version"
+        with self.db.connection() as conn:
+            rows = conn.execute(query, args).fetchall()
+        return [
+            {
+                "source": row["source"],
+                "version": row["version"],
+                "fingerprint": row["fingerprint"],
+                "created_at": row["created_at"],
+                "node_count": len(json.loads(row["nodes_json"])),
+                "issue_count": len(json.loads(row["issues_json"])),
+            }
+            for row in rows
+        ]
 
     def load_curriculum_nodes(self) -> list[CurriculumNode]:
         with self.db.connection() as conn:
