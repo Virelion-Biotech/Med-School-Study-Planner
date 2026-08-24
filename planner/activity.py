@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .state import ActivityType
+from .models import ActivityType
 
 
 @dataclass(frozen=True)
