@@ -216,6 +216,11 @@ class AdaptiveDB:
             ).fetchall()
         return [KnowledgeComponent(r["id"], r["topic_id"], r["name"], r["initial_mastery"]) for r in rows]
 
+    def load_knowledge_components_for_id(self, knowledge_component_id: str) -> KnowledgeComponent | None:
+        with self.db.connection() as conn:
+            row = conn.execute("SELECT * FROM knowledge_components WHERE id=?", (knowledge_component_id,)).fetchone()
+        return KnowledgeComponent(row["id"], row["topic_id"], row["name"], row["initial_mastery"]) if row else None
+
     def save_knowledge_components(self, components: list[KnowledgeComponent]) -> None:
         with self.db.connection() as conn:
             for kc in components:
