@@ -37,9 +37,13 @@ def rank_actions(
             continue
         exam = best_exam_for_topic(topic, exams, day)
         minutes = max(15, int(round(workloads.get(topic.id, topic.estimated_hours * 60))))
+        performance = topic.recent_question_accuracy if topic.question_attempts else None
         activity = choose_default_activity(
             bool(topic.next_review_due and topic.next_review_due <= day),
             topic.mastery,
+            performance=performance,
+            confidence_gap=topic.question_confidence_gap,
+            evidence_strength=topic.question_evidence_strength,
         )
         breakdown = action_utility(
             topic,
