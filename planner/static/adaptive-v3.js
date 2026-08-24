@@ -20,7 +20,7 @@
     const coverage = m.snap.topics?.length ? new Set(m.snap.sessions?.filter(s => s.completed).map(s => s.topic_id)).size / m.snap.topics.length : 0;
     const performance = m.analytics.mean_performance ?? 0.5;
     const retentionProxy = Math.max(0, 1 - Math.min(1, m.due / Math.max(1, m.snap.topics?.length || 1)));
-    const score = Math.round((0.40*m.mastery + 0.25*performance + 0.20*coverage + 0.15*retentionProxy) * 100);
+    const score = Math.round((0.30*m.mastery + 0.20*retentionProxy + 0.20*coverage + 0.20*performance + 0.10*Math.min(1, 1 - (m.remaining / Math.max(1, m.plannedToday)))) * 100);
     return {score, coverage, performance, retentionProxy};
   }
 
@@ -28,7 +28,7 @@
     const r = readiness(m);
     const behind = m.remaining > 0;
     return `<section class="panel adaptive-panel" id="adaptive-panel">
-      <div class="panel-head"><div><div class="kicker">ADAPTIVE ENGINE</div><h2>Your study state</h2><span>The planner now separates learning, retention, workload, and deadline pressure.</span></div>
+      <div class="panel-head"><div><div class="kicker">ADAPTIVE ENGINE</div><h2>Your study state</h2><span>Learning, retention, workload, practice, and deadline pressure are tracked separately.</span></div>
       <div class="adaptive-score"><strong>${r.score}%</strong><small>planning readiness</small></div></div>
       <div class="adaptive-grid">
         <div><span>Knowledge</span><strong>${Math.round(m.mastery*100)}%</strong><small>current mastery signal</small></div>
@@ -52,12 +52,20 @@
         try { await api('/replan',{method:'POST',body:JSON.stringify({start_date:today(),days:7,optimizer:true,locked_session_ids:[]})}); await window.load(); window.toast?.('Week rebalanced around what remains'); } catch(e) { window.toast?.(e.message); }
       });
       document.querySelector('#adaptive-minimum')?.addEventListener('click', async () => {
+        const button = document.querySelector('#adaptive-minimum');
         try {
+          button?.setAttribute('disabled','disabled');
           const profile = await api('/profile');
-          await api('/profile',{method:'PUT',body:JSON.stringify({...profile,daily_available_minutes:45,max_session_minutes:45})});
+          const temporary = {...profile, daily_available_minutes:45, max_session_minutes:45};
+          await api('/profile',{method:'PUT',body:JSON.stringify(temporary)});
           await api('/replan',{method:'POST',body:JSON.stringify({start_date:today(),days:1,optimizer:true,locked_session_ids:[]})});
-          await window.load(); window.toast?.('Minimum-day plan created');
-        } catch(e) { window.toast?.(e.message); }
+          // Restore the student's normal capacity immediately; only today's plan remains conservative.
+          await api('/profile',{method:'PUT',body:JSON.stringify(profile)});
+          await window.load(); window.toast?.('Minimum-day plan created without changing your normal capacity');
+        } catch(e) {
+          window.toast?.(e.message);
+          try { if (typeof profile !== 'undefined') await api('/profile',{method:'PUT',body:JSON.stringify(profile)}); } catch (_) {}
+        } finally { button?.removeAttribute('disabled'); }
       });
       document.querySelector('#adaptive-export')?.addEventListener('click', async () => {
         try {
