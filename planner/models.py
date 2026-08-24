@@ -12,6 +12,14 @@ class SessionType(str, Enum):
     PRACTICE = "practice"
 
 
+class ActivityType(str, Enum):
+    LEARN = "learn"
+    REVIEW = "review"
+    QUESTIONS = "questions"
+    RECALL = "recall"
+    MIXED = "mixed"
+
+
 @dataclass(frozen=True)
 class Subject:
     id: str
@@ -59,6 +67,7 @@ class StudySession:
     actual_minutes: int | None = None
     session_type: SessionType = SessionType.NEW
     performance_score: float | None = None
+    activity: ActivityType = ActivityType.MIXED
 
 
 @dataclass(frozen=True)
