@@ -259,7 +259,7 @@ def adaptive_plan(request: AdaptivePlanRequest):
     )
     return {
         "status": plan.status,
-        "sessions": [asdict(s) | {"session_type": s.session_type.value} for s in plan.sessions],
+        "sessions": [asdict(s) | {"session_type": s.session_type.value, "activity_type": s.activity.value} for s in plan.sessions],
         "subject_minutes": plan.subject_minutes,
         "unfulfilled_subject_floor": plan.unfulfilled_subject_floor,
         "unfulfilled_exam_coverage": plan.unfulfilled_exam_coverage,
@@ -273,12 +273,31 @@ def calibrate_workload(topic_id: str):
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
     history = [x["actual_minutes"] for x in db.snapshot()["sessions"] if x["topic_id"] == topic_id and x["completed"] and x["actual_minutes"]]
-    # Rebuild from the original prior + complete observation history so repeated calibration is idempotent.
     updated = update_workload(initial_workload(topic), [int(x) for x in history])
     adaptive_db.save_workload(updated)
     topic.workload_confidence = updated.confidence
     db.update_topic(topic)
     return asdict(updated)
+
+
+@app.post("/v2/workload/calibrate-all")
+def calibrate_all_workloads():
+    snap = db.snapshot()
+    history_by_topic: dict[str, list[int]] = {}
+    for row in snap["sessions"]:
+        if row["completed"] and row["actual_minutes"]:
+            history_by_topic.setdefault(row["topic_id"], []).append(int(row["actual_minutes"]))
+    updated = []
+    for topic in db.load_curriculum()[1]:
+        history = history_by_topic.get(topic.id, [])
+        if not history:
+            continue
+        estimate = update_workload(initial_workload(topic), history)
+        adaptive_db.save_workload(estimate)
+        topic.workload_confidence = estimate.confidence
+        db.update_topic(topic)
+        updated.append(asdict(estimate))
+    return {"updated": updated, "count": len(updated)}
 
 
 @app.get("/v2/readiness")
