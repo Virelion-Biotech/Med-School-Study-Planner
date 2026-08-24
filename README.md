@@ -44,6 +44,7 @@ The application keeps the stable legacy APIs and data structures while introduci
 - **Readiness model:** knowledge, retention, coverage, practice, and deadline protection remain separate signals rather than being collapsed into an opaque exam score.
 - **Evaluation harness:** deterministic synthetic students and baseline comparison between the legacy planner and adaptive CP-SAT.
 - **Adaptive UI:** current study state, readiness, catch-up/rebalance, minimum-day mode, and learning-state export.
+- **Adaptive session loop:** completing a session updates workload, FSRS, and mapped knowledge components before an optional replan.
 
 ## USMLE-first onboarding
 
@@ -57,6 +58,24 @@ GET  /presets/step1
 ```
 
 Official source: https://www.usmle.org/exam-resources/step-1-materials/step-1-content-outline-and-specifications
+
+## Adaptive API
+
+The adaptive application entrypoint is `planner.v2_app:app`. It preserves every legacy route and adds:
+
+```text
+GET  /v2/status
+GET  /v2/topic/{topic_id}/state
+GET  /v2/topic/{topic_id}/why
+POST /v2/topic/{topic_id}/review
+POST /v2/topic/{topic_id}/question
+POST /v2/topic/{topic_id}/session-observation
+POST /v2/plan
+POST /v2/workload/{topic_id}/calibrate
+GET  /v2/readiness
+```
+
+A normal completed session flows through the legacy persistence path and then into the adaptive learning loop. Question-level evidence remains the preferred granular BKT signal; session-level evidence is deliberately coarser.
 
 ## Adaptive data model
 
@@ -99,6 +118,7 @@ The repository includes regression tests for:
 - persistent adaptive learning state;
 - deterministic synthetic scheduler evaluation;
 - readiness and IRT evidence guardrails;
+- V2 API status/state/review behavior;
 - frontend integrity and existing rescheduling/state-management tests.
 
 GitHub Actions runs `compileall` and the full pytest suite on pushes and pull requests.
@@ -109,7 +129,7 @@ The development runtime used for these edits cannot resolve `github.com`, so loc
 
 ```bash
 pip install -e '.[all]'
-uvicorn planner.api:app --reload
+uvicorn planner.v2_app:app --reload
 pytest -q
 ```
 
