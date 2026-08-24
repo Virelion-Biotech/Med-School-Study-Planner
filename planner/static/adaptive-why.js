@@ -16,14 +16,9 @@
     installStyle();
     const actions = document.querySelector('.modal-card .drawer-actions');
     if (!actions || actions.querySelector('[data-why-session]')) return;
-    const title = document.querySelector('.modal-card h2');
-    if (!title) return;
-    const topic = title.textContent?.trim();
+    const sessionId = Number(window.__adaptiveActiveSessionId);
     const snap = window.__plannerSnapshot || {};
-    const session = (snap.sessions || []).find(s => {
-      const t = (snap.topics || []).find(x => x.id === s.topic_id);
-      return t?.name === topic && !s.completed;
-    });
+    const session = (snap.sessions || []).find(s => Number(s.id) === sessionId && !s.completed);
     if (!session?.topic_id) return;
     const button = document.createElement('button');
     button.type = 'button';
@@ -35,8 +30,7 @@
       button.textContent = 'Loading…';
       try {
         const data = await api(`/v2/topic/${encodeURIComponent(session.topic_id)}/why`);
-        const existing = document.querySelector('[data-why-panel]');
-        existing?.remove();
+        document.querySelector('[data-why-panel]')?.remove();
         const panel = document.createElement('div');
         panel.dataset.whyPanel = '1';
         panel.className = 'adaptive-why-panel';
