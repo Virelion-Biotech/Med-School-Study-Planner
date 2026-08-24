@@ -4,15 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
 
-
-class ActivityType(str, Enum):
-    """Study actions the planner can schedule independently."""
-
-    LEARN = "learn"
-    REVIEW = "review"
-    QUESTIONS = "questions"
-    RECALL = "recall"
-    MIXED = "mixed"
+from .models import ActivityType
 
 
 @dataclass(frozen=True)
