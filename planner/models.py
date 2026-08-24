@@ -33,6 +33,13 @@ class Topic:
     self_difficulty: float = 3.0
     volume: float = 0.5
     cognitive_load: float = 0.5
+    # V2 adaptive-planner state. Defaults preserve all existing callers/storage.
+    knowledge_component_ids: tuple[str, ...] = ()
+    curriculum_node_ids: tuple[str, ...] = ()
+    block_id: str | None = None
+    mastery_uncertainty: float = 1.0
+    memory_retrievability: float | None = None
+    workload_confidence: float = 0.25
 
 
 @dataclass(frozen=True)
@@ -107,8 +114,13 @@ def subject_blueprint_weight(subject: Subject) -> float:
     return clamp(subject.exam_weight if subject.exam_weight <= 1 else subject.exam_weight / 16.0)
 
 
-def topic_priority(topic: Topic, subject: Subject, today: date, exam: Exam | None,
-                   weights: PriorityWeights = PriorityWeights()) -> float:
+def topic_priority(
+    topic: Topic,
+    subject: Subject,
+    today: date,
+    exam: Exam | None,
+    weights: PriorityWeights = PriorityWeights(),
+) -> float:
     exam_date = exam.date if exam else None
     tested = 1.0 if not exam or topic.subject_id in exam.subject_ids or topic.id in exam.topic_ids else 0.15
     return (
