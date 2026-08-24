@@ -2,7 +2,6 @@
   const api = (path, options = {}) => fetch(window.plannerApiUrl(path), {
     headers: {'Content-Type':'application/json', ...(options.headers || {})}, ...options,
   }).then(async r => { let b={}; try { b=await r.json(); } catch {} if (!r.ok) throw Error(b.detail || `HTTP ${r.status}`); return b; });
-  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const today = () => new Date().toISOString().slice(0,10);
 
   async function metrics() {
@@ -32,7 +31,7 @@
       <div class="panel-head"><div><div class="kicker">ADAPTIVE ENGINE</div><h2>Your study state</h2><span>The planner now separates learning, retention, workload, and deadline pressure.</span></div>
       <div class="adaptive-score"><strong>${r.score}%</strong><small>planning readiness</small></div></div>
       <div class="adaptive-grid">
-        <div><span>Knowledge</span><strong>${Math.round(m.mastery*100)}%</strong><small>legacy mastery signal</small></div>
+        <div><span>Knowledge</span><strong>${Math.round(m.mastery*100)}%</strong><small>current mastery signal</small></div>
         <div><span>Performance</span><strong>${Math.round(r.performance*100)}%</strong><small>recent completed sessions</small></div>
         <div><span>Review pressure</span><strong>${m.due}</strong><small>due today</small></div>
         <div><span>Today</span><strong>${m.completedToday}/${m.plannedToday}m</strong><small>actual / planned</small></div>
@@ -62,7 +61,7 @@
       });
       document.querySelector('#adaptive-export')?.addEventListener('click', async () => {
         try {
-          const blob = new Blob([JSON.stringify(m,{null:2},2)], {type:'application/json'});
+          const blob = new Blob([JSON.stringify(m,null,2)], {type:'application/json'});
           const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'planner-learning-state.json'; a.click(); URL.revokeObjectURL(a.href);
         } catch(e) { window.toast?.(e.message); }
       });
