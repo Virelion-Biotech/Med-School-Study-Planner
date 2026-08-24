@@ -6,8 +6,10 @@ from dataclasses import asdict
 from datetime import date
 
 from planner.ablation import default_ablation_variants, simulate_variant
+from planner.calibration import calibration_passes
 from planner.evaluation_v2 import deltas, summarize_population
 from planner.evaluation import synthetic_student
+from planner.model_validation import validate_models
 from planner.simulation import compare_student_population, make_student
 from planner.statistics import paired_bootstrap_ci, paired_from_metrics
 
@@ -30,6 +32,7 @@ def main() -> None:
     parser.add_argument("--start", default="2026-08-24")
     parser.add_argument("--ablation", action="store_true", help="run component ablations in addition to the main comparison")
     parser.add_argument("--bootstrap", action="store_true", help="add paired bootstrap 95% confidence intervals")
+    parser.add_argument("--model-validation", action="store_true", help="validate BKT and retention calibration on synthetic observations")
     args = parser.parse_args()
 
     subjects, topics, exams, profile = synthetic_student(7)
@@ -53,6 +56,15 @@ def main() -> None:
             )
         paired[field] = item
     payload["paired_effects"] = paired
+
+    if args.model_validation:
+        model_report = validate_models(seed=17, observations=max(1000, args.seeds * 100))
+        payload["model_validation"] = {
+            "bkt": asdict(model_report.bkt),
+            "fsrs_like_retention": asdict(model_report.fsrs),
+            "bkt_calibration_pass": calibration_passes(model_report.bkt),
+            "retention_calibration_pass": calibration_passes(model_report.fsrs),
+        }
 
     if args.ablation:
         ablation_metrics = []
