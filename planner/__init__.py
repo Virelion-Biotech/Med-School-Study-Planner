@@ -3,6 +3,7 @@ from .scheduler import allocate_day, generate_week
 from .adaptive_optimizer import generate_adaptive_week, rank_actions
 from .adaptive_cpsat import AdaptivePlan, optimize_adaptive_week
 from .curriculum import CurriculumGraph
+from .cross_curriculum import CurriculumMapping, deduplicate_mappings, mappings_for_kc, mappings_for_node
 from .fsrs import FSRSAdapter
 from .mastery import BKTParameters, predict_mastery, update_bkt
 from .readiness import ReadinessComponents, readiness_from_signals
@@ -10,5 +11,6 @@ from .state import *
 from .utility import UtilityBreakdown, UtilityWeights, action_utility
 from .workload import initial_workload, update_workload
 
-# Registers the V2 curriculum import/snapshot routes on the shared FastAPI app.
+# Registers V2 curriculum and cross-curriculum routes on the shared FastAPI app.
 from . import curriculum_api as _curriculum_api  # noqa: F401,E402
+from . import cross_curriculum_api as _cross_curriculum_api  # noqa: F401,E402
