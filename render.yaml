@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: starter
     buildCommand: pip install -e '.[all]'
-    startCommand: uvicorn planner.api:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn planner.v2_app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: STUDY_PLANNER_DB
