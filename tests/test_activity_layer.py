@@ -26,6 +26,7 @@ def test_session_activity_round_trips(tmp_path):
     token = CURRENT_USER.set("activity-round-trip")
     try:
         db.upsert_subject(Subject("s", "Subject"))
+        db.upsert_topic(Topic("t", "s", "Topic"))
         ids = db.save_sessions([StudySession(date(2026, 8, 24), "t", 30, activity=ActivityType.REVIEW)])
         assert ids
         row = db.snapshot()["sessions"][0]
