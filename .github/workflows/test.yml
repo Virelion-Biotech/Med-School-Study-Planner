@@ -12,5 +12,6 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install -e '.[all]'
-      - run: python -m compileall planner tests
+      - run: python -m compileall planner tests scripts
       - run: pytest -q
+      - run: python scripts/regression_gate.py --seeds 5 --days 14
