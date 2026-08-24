@@ -39,6 +39,7 @@ def summarize_population(metrics: list[SimulationMetrics]) -> PopulationComparis
         mean_deadline_coverage=_group(metrics, "deadline_coverage"),
         mean_overdue_reviews=_group(metrics, "overdue_reviews"),
         mean_fairness_gap_minutes=_group(metrics, "fairness_gap_minutes"),
+    )
 
 
 def deltas(summary: PopulationComparison, reference: str, candidate: str) -> dict[str, float]:
