@@ -19,6 +19,14 @@ def test_no_duplicate_script_paths():
     assert len(scripts) == len(set(scripts)), "index.html loads a script more than once"
 
 
+def test_adaptive_explanation_layer_is_loaded_after_adaptive_engine():
+    html = INDEX.read_text(encoding="utf-8")
+    scripts = re.findall(r'<script[^>]+src=["\'](\./[^"\']+)["\']', html)
+    assert "./adaptive-v3.js" in scripts
+    assert "./adaptive-why.js" in scripts
+    assert scripts.index("./adaptive-v3.js") < scripts.index("./adaptive-why.js")
+
+
 def test_all_frontend_javascript_parses_when_node_is_available():
     import shutil
     import subprocess
