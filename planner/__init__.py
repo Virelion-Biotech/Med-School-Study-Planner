@@ -2,6 +2,7 @@ from .models import *
 from .scheduler import allocate_day, generate_week
 from .adaptive_optimizer import generate_adaptive_week, rank_actions
 from .adaptive_cpsat import AdaptivePlan, optimize_adaptive_week
+from .kc_planning import optimize_with_kc_state
 from .curriculum import CurriculumGraph
 from .cross_curriculum import CurriculumMapping, deduplicate_mappings, mappings_for_kc, mappings_for_node
 from .fsrs import FSRSAdapter
