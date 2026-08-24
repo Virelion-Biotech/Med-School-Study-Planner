@@ -27,7 +27,13 @@ CREATE TABLE IF NOT EXISTS topics (
  id TEXT PRIMARY KEY, subject_id TEXT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
  name TEXT NOT NULL, complexity REAL NOT NULL, estimated_hours REAL NOT NULL,
  mastery REAL NOT NULL, last_studied TEXT, next_review_due TEXT,
- self_difficulty REAL NOT NULL, volume REAL NOT NULL, cognitive_load REAL NOT NULL);
+ self_difficulty REAL NOT NULL, volume REAL NOT NULL, cognitive_load REAL NOT NULL,
+ knowledge_component_ids_json TEXT NOT NULL DEFAULT '[]',
+ curriculum_node_ids_json TEXT NOT NULL DEFAULT '[]',
+ block_id TEXT,
+ mastery_uncertainty REAL NOT NULL DEFAULT 1.0,
+ memory_retrievability REAL,
+ workload_confidence REAL NOT NULL DEFAULT 0.25);
 CREATE TABLE IF NOT EXISTS exams (
  id TEXT PRIMARY KEY, exam_date TEXT NOT NULL, subject_ids_json TEXT NOT NULL,
  topic_ids_json TEXT NOT NULL, weight REAL NOT NULL);
@@ -49,6 +55,15 @@ CREATE INDEX IF NOT EXISTS idx_sessions_topic ON study_sessions(topic_id);
 CREATE INDEX IF NOT EXISTS idx_topics_subject ON topics(subject_id);
 """
 
+TOPIC_MIGRATION_COLUMNS = {
+    "knowledge_component_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+    "curriculum_node_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+    "block_id": "TEXT",
+    "mastery_uncertainty": "REAL NOT NULL DEFAULT 1.0",
+    "memory_retrievability": "REAL",
+    "workload_confidence": "REAL NOT NULL DEFAULT 0.25",
+}
+
 
 class StudyDB:
     def __init__(self, path: str | Path = "study_planner.db") -> None:
@@ -63,6 +78,13 @@ class StudyDB:
         base = Path(self.path)
         return str(base.with_name(f"{base.stem}-{digest}{base.suffix}"))
 
+    @staticmethod
+    def _migrate_topics(conn: sqlite3.Connection) -> None:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(topics)").fetchall()}
+        for name, definition in TOPIC_MIGRATION_COLUMNS.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE topics ADD COLUMN {name} {definition}")
+
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         path = Path(self._path_for_user())
@@ -71,9 +93,8 @@ class StudyDB:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         try:
-            # Idempotent and cheap for this small schema; also initializes a new
-            # per-user database on the first request without a race-prone global DB.
             conn.executescript(SCHEMA)
+            self._migrate_topics(conn)
             yield conn
             conn.commit()
         finally:
@@ -82,6 +103,7 @@ class StudyDB:
     def initialize(self) -> None:
         with self.connection() as conn:
             conn.executescript(SCHEMA)
+            self._migrate_topics(conn)
 
     def save_profile(self, profile: UserProfile, user_id: str = "default") -> None:
         with self.connection() as conn:
@@ -120,15 +142,38 @@ class StudyDB:
         with self.connection() as conn:
             if conn.execute("SELECT 1 FROM subjects WHERE id=?", (topic.subject_id,)).fetchone() is None:
                 raise ValueError("subject does not exist")
-            conn.execute("""INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET subject_id=excluded.subject_id,name=excluded.name,complexity=excluded.complexity,
-            estimated_hours=excluded.estimated_hours,mastery=excluded.mastery,last_studied=excluded.last_studied,
-            next_review_due=excluded.next_review_due,self_difficulty=excluded.self_difficulty,volume=excluded.volume,
-            cognitive_load=excluded.cognitive_load""",
-            (topic.id, topic.subject_id, topic.name, topic.complexity, topic.estimated_hours, topic.mastery,
-             topic.last_studied.isoformat() if topic.last_studied else None,
-             topic.next_review_due.isoformat() if topic.next_review_due else None,
-             topic.self_difficulty, topic.volume, topic.cognitive_load))
+            conn.execute("""
+                INSERT INTO topics (
+                    id, subject_id, name, complexity, estimated_hours, mastery,
+                    last_studied, next_review_due, self_difficulty, volume, cognitive_load,
+                    knowledge_component_ids_json, curriculum_node_ids_json, block_id,
+                    mastery_uncertainty, memory_retrievability, workload_confidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    subject_id=excluded.subject_id,
+                    name=excluded.name,
+                    complexity=excluded.complexity,
+                    estimated_hours=excluded.estimated_hours,
+                    mastery=excluded.mastery,
+                    last_studied=excluded.last_studied,
+                    next_review_due=excluded.next_review_due,
+                    self_difficulty=excluded.self_difficulty,
+                    volume=excluded.volume,
+                    cognitive_load=excluded.cognitive_load,
+                    knowledge_component_ids_json=excluded.knowledge_component_ids_json,
+                    curriculum_node_ids_json=excluded.curriculum_node_ids_json,
+                    block_id=excluded.block_id,
+                    mastery_uncertainty=excluded.mastery_uncertainty,
+                    memory_retrievability=excluded.memory_retrievability,
+                    workload_confidence=excluded.workload_confidence
+            """, (
+                topic.id, topic.subject_id, topic.name, topic.complexity, topic.estimated_hours, topic.mastery,
+                topic.last_studied.isoformat() if topic.last_studied else None,
+                topic.next_review_due.isoformat() if topic.next_review_due else None,
+                topic.self_difficulty, topic.volume, topic.cognitive_load,
+                json.dumps(topic.knowledge_component_ids), json.dumps(topic.curriculum_node_ids), topic.block_id,
+                topic.mastery_uncertainty, topic.memory_retrievability, topic.workload_confidence,
+            ))
 
     def delete_topic(self, topic_id: str) -> None:
         with self.connection() as conn:
@@ -165,7 +210,7 @@ class StudyDB:
     def load_curriculum(self) -> tuple[list[Subject], list[Topic], list[Exam]]:
         snap = self.snapshot()
         subjects = [Subject(s["id"], s["name"], s["exam_weight"], s["category"]) for s in snap["subjects"]]
-        topics = [Topic(id=t["id"], subject_id=t["subject_id"], name=t["name"], complexity=t["complexity"], estimated_hours=t["estimated_hours"], mastery=t["mastery"], last_studied=date.fromisoformat(t["last_studied"]) if t["last_studied"] else None, next_review_due=date.fromisoformat(t["next_review_due"]) if t["next_review_due"] else None, self_difficulty=t["self_difficulty"], volume=t["volume"], cognitive_load=t["cognitive_load"]) for t in snap["topics"]]
+        topics = [self._topic_from_row_dict(t) for t in snap["topics"]]
         exams = [Exam(e["id"], date.fromisoformat(e["exam_date"]), tuple(json.loads(e["subject_ids_json"])), tuple(json.loads(e["topic_ids_json"])), e["weight"]) for e in snap["exams"]]
         return subjects, topics, exams
 
@@ -180,8 +225,10 @@ class StudyDB:
     def reschedule_session(self, session_id: int, new_date: date) -> None:
         with self.connection() as conn:
             row = conn.execute("SELECT completed FROM study_sessions WHERE id=?", (session_id,)).fetchone()
-            if not row: raise KeyError(f"session {session_id} not found")
-            if row["completed"]: raise ValueError("completed sessions cannot be rescheduled")
+            if not row:
+                raise KeyError(f"session {session_id} not found")
+            if row["completed"]:
+                raise ValueError("completed sessions cannot be rescheduled")
             conn.execute("UPDATE study_sessions SET session_date=? WHERE id=?", (new_date.isoformat(), session_id))
 
     def delete_uncompleted_sessions_in_range(self, start: date, end: date, preserve_ids: set[int] | None = None) -> None:
@@ -226,8 +273,22 @@ class StudyDB:
             (topic_id, state.repetitions, state.interval_days, state.ease_factor, state.stability_days, state.last_rating))
 
     @staticmethod
-    def _topic_from_row(row: sqlite3.Row) -> Topic:
-        return Topic(id=row["id"], subject_id=row["subject_id"], name=row["name"], complexity=row["complexity"], estimated_hours=row["estimated_hours"], mastery=row["mastery"], last_studied=date.fromisoformat(row["last_studied"]) if row["last_studied"] else None, next_review_due=date.fromisoformat(row["next_review_due"]) if row["next_review_due"] else None, self_difficulty=row["self_difficulty"], volume=row["volume"], cognitive_load=row["cognitive_load"])
+    def _topic_from_row_dict(row: dict) -> Topic:
+        return Topic(
+            id=row["id"], subject_id=row["subject_id"], name=row["name"], complexity=row["complexity"],
+            estimated_hours=row["estimated_hours"], mastery=row["mastery"],
+            last_studied=date.fromisoformat(row["last_studied"]) if row["last_studied"] else None,
+            next_review_due=date.fromisoformat(row["next_review_due"]) if row["next_review_due"] else None,
+            self_difficulty=row["self_difficulty"], volume=row["volume"], cognitive_load=row["cognitive_load"],
+            knowledge_component_ids=tuple(json.loads(row.get("knowledge_component_ids_json") or "[]")),
+            curriculum_node_ids=tuple(json.loads(row.get("curriculum_node_ids_json") or "[]")),
+            block_id=row.get("block_id"), mastery_uncertainty=float(row.get("mastery_uncertainty") or 1.0),
+            memory_retrievability=row.get("memory_retrievability"), workload_confidence=float(row.get("workload_confidence") or 0.25),
+        )
+
+    @classmethod
+    def _topic_from_row(cls, row: sqlite3.Row) -> Topic:
+        return cls._topic_from_row_dict(dict(row))
 
     def get_topic(self, topic_id: str) -> Topic | None:
         with self.connection() as conn:
