@@ -4,7 +4,16 @@
   }).then(async r => { let b={}; try { b=await r.json(); } catch {} if (!r.ok) throw Error(b.detail || `HTTP ${r.status}`); return b; });
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+  function installStyle() {
+    if (document.querySelector('#adaptive-why-style')) return;
+    const style = document.createElement('style');
+    style.id = 'adaptive-why-style';
+    style.textContent = `.adaptive-why-panel{margin-top:14px;padding:12px 14px;border:1px solid #dce8e6;border-radius:12px;background:#f7fbfa}.adaptive-why-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.adaptive-why-head b{font-size:11px}.adaptive-why-head span{font-size:9px;color:#0f766e;font-weight:800}.adaptive-why-reasons{display:grid;gap:5px;margin-top:8px;color:#71858b;font-size:10px;line-height:1.4}@media(max-width:600px){.adaptive-why-head{align-items:flex-start;flex-direction:column}}`;
+    document.head.appendChild(style);
+  }
+
   function explainButton() {
+    installStyle();
     const actions = document.querySelector('.modal-card .drawer-actions');
     if (!actions || actions.querySelector('[data-why-session]')) return;
     const title = document.querySelector('.modal-card h2');
