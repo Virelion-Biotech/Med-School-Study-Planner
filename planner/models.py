@@ -41,13 +41,16 @@ class Topic:
     self_difficulty: float = 3.0
     volume: float = 0.5
     cognitive_load: float = 0.5
-    # V2 adaptive-planner state. Defaults preserve all existing callers/storage.
     knowledge_component_ids: tuple[str, ...] = ()
     curriculum_node_ids: tuple[str, ...] = ()
     block_id: str | None = None
     mastery_uncertainty: float = 1.0
     memory_retrievability: float | None = None
     workload_confidence: float = 0.25
+    question_attempts: int = 0
+    recent_question_accuracy: float = 0.5
+    question_confidence_gap: float = 0.0
+    question_evidence_strength: float = 0.0
 
 
 @dataclass(frozen=True)
