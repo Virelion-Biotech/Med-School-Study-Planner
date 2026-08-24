@@ -1,6 +1,49 @@
 # Med-School-Study-Planner
 
-An adaptive, fairness-constrained medical study planner that turns curriculum, exams, mastery, memory state, and real study performance into a continuously replanned schedule.
+An adaptive, fairness-constrained medical study planner that turns curriculum, exams, student state, memory, workload, and real study performance into a continuously replanned schedule.
+
+## Architecture
+
+The planner is being migrated from a hand-weighted priority engine to a modular adaptive architecture:
+
+```text
+Curriculum graph
+      ↓
+Exam / blueprint model ─── Workload model ─── Student model
+      │                         │                    │
+      └─────────────────────────┼────────────────────┘
+                                ↓
+                       Utility-per-minute
+                                ↓
+                         CP-SAT scheduler
+                                ↓
+                         Daily / weekly plan
+                                ↓
+                         Study behaviour
+                         ↙            ↘
+                      BKT            FSRS
+                         ↘            ↙
+                         Student state
+                                ↓
+                              Replan
+```
+
+The application keeps the stable legacy APIs and data structures while introducing the new components behind explicit interfaces.
+
+## Current adaptive components
+
+- **Curriculum graph:** reusable school, USMLE, and personal hierarchies with knowledge-component mapping.
+- **BKT-style mastery:** probability of learned knowledge, uncertainty, observations, and time-dependent forgetting.
+- **FSRS adapter:** production memory scheduling behind a planner-owned interface; the rest of the code does not depend directly on the third-party API.
+- **Workload estimation:** cold-start priors plus robust student-specific calibration from actual study duration.
+- **Utility engine:** expected learning value per minute, with explicit exam urgency, mastery gap, retention gap, blueprint weight, workload, and block relevance components.
+- **Adaptive CP-SAT:** daily capacity, rest-day protection, fairness floors, review capacity, exam-coverage constraints, and locked/preallocated work.
+- **Activity model:** distinguishes learning, review, questions, recall, and mixed sessions.
+- **Question pipeline:** persistent question attempts can update knowledge-component BKT state.
+- **IRT layer:** a deliberately deferred 2PL analytical layer with an evidence gate; it does not infer student ability from tiny samples.
+- **Readiness model:** knowledge, retention, coverage, practice, and deadline protection remain separate signals rather than being collapsed into an opaque exam score.
+- **Evaluation harness:** deterministic synthetic students and baseline comparison between the legacy planner and adaptive CP-SAT.
+- **Adaptive UI:** current study state, readiness, catch-up/rebalance, minimum-day mode, and learning-state export.
 
 ## USMLE-first onboarding
 
@@ -15,32 +58,52 @@ GET  /presets/step1
 
 Official source: https://www.usmle.org/exam-resources/step-1-materials/step-1-content-outline-and-specifications
 
-## Pipeline
+## Adaptive data model
 
-`Curriculum + Exams + Profile -> Blueprint/Complexity + Priority -> Weekly fairness + memory/review -> Rule scheduler / CP-SAT -> Study sessions -> Completion/performance -> Memory + mastery + time calibration -> Replan`
+V2 state is stored separately from the legacy topic schema so existing student data remains readable while the migration proceeds. The adaptive store contains:
 
-## Implemented
+```text
+curriculum_nodes
+knowledge_components
+student_knowledge
+student_fsrs
+workload_estimates
+question_attempts
+planner_events
+```
 
-- Subject, Topic, Exam, StudySession, and UserProfile domain model.
-- Official USMLE Step 1 starter blueprint with preloaded system priorities.
-- Complexity scoring from volume, cognitive load, and personal difficulty.
-- Priority scoring from urgency, complexity, mastery gap, normalized exam weighting, and review state.
-- Weekly subject fairness floors with explicit residual debt.
-- Protected review allocation that increases near exams.
-- SQLite persistence for curriculum, exams, topics, sessions, profile, and memory state.
-- SM-2-inspired transparent memory scheduling with bounded ease/stability.
-- Adaptive mastery updates from session performance.
-- Actual-vs-planned study-time history and complexity recalibration.
-- CP-SAT optimization with daily capacity, rest-day, fairness, locked-session, and near-term exam-coverage constraints.
-- Rule-based fallback when OR-Tools is unavailable or the optimization problem is infeasible.
-- Explicit reporting of unfulfilled fairness and exam-coverage requirements.
-- Drag-and-drop session rescheduling with server-side rest-day, daily-cap, and exam-deadline validation.
-- Locked-session replanning that preserves moved work and accounts for its subject/time/topic coverage.
-- Beginner-focused browser UI for Today, Week, Curriculum, Exams, Insights, session completion, and planner settings.
-- JSON snapshot and CSV session exports.
-- Dockerfile + Compose deployment with persistent SQLite storage.
-- GitHub Actions CI with compile checks and full test suite.
-- GitHub Pages frontend + Render/FastAPI backend deployment path.
+This keeps identity/curriculum data separate from learning-state and event data and provides a clean audit trail for future research analyses.
+
+## Planning behaviour
+
+The scheduler does not permanently equate "importance" with one scalar hand-tuned priority.
+
+- **When will I forget it?** FSRS.
+- **Have I learned it?** BKT-style mastery.
+- **How long will it take me?** empirical workload estimation.
+- **What matters for the assessment?** exam/blueprint metadata.
+- **What can physically fit?** CP-SAT constraints.
+- **How do we avoid starving subjects?** fairness constraints.
+- **Why was this scheduled?** utility decomposition and machine-readable reasons.
+
+The existing `/plan` and `/replan` APIs remain stable; the optimizer path now routes through the adaptive utility-driven engine.
+
+## Testing
+
+The repository includes regression tests for:
+
+- legacy scheduling behaviour;
+- adaptive curriculum, BKT, workload, and utility behaviour;
+- FSRS round-trips;
+- adaptive CP-SAT capacity, rest, preallocation, and exam constraints;
+- persistent adaptive learning state;
+- deterministic synthetic scheduler evaluation;
+- readiness and IRT evidence guardrails;
+- frontend integrity and existing rescheduling/state-management tests.
+
+GitHub Actions runs `compileall` and the full pytest suite on pushes and pull requests.
+
+The development runtime used for these edits cannot resolve `github.com`, so local execution from this environment was not possible. CI remains the authoritative executable validation path.
 
 ## Run locally
 
