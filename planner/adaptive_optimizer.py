@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-import math
 
-from .models import Exam, SessionType, StudySession, Subject, Topic, UserProfile, best_exam_for_topic
+from .activity import choose_default_activity
+from .models import ActivityType, Exam, SessionType, StudySession, Subject, Topic, UserProfile, best_exam_for_topic
 from .utility import UtilityBreakdown, UtilityWeights, action_utility
 
 
@@ -15,6 +15,7 @@ class RankedAction:
     expected_minutes: int
     score: UtilityBreakdown
     session_type: SessionType
+    activity: ActivityType
 
 
 def rank_actions(
@@ -26,7 +27,7 @@ def rank_actions(
     current_block: str | None = None,
     utility_weights: UtilityWeights = UtilityWeights(),
 ) -> list[RankedAction]:
-    """Rank study actions by expected gain per minute without changing the legacy scheduler."""
+    """Rank study actions by activity-aware expected gain per minute."""
     workloads = workloads or {}
     subject_map = {subject.id: subject for subject in subjects}
     ranked: list[RankedAction] = []
@@ -36,6 +37,10 @@ def rank_actions(
             continue
         exam = best_exam_for_topic(topic, exams, day)
         minutes = max(15, int(round(workloads.get(topic.id, topic.estimated_hours * 60))))
+        activity = choose_default_activity(
+            bool(topic.next_review_due and topic.next_review_due <= day),
+            topic.mastery,
+        )
         breakdown = action_utility(
             topic,
             subject,
@@ -46,10 +51,11 @@ def rank_actions(
             retrievability=topic.memory_retrievability,
             current_block=current_block,
             topic_block=topic.block_id,
+            activity=activity,
             weights=utility_weights,
         )
         session_type = SessionType.REVIEW if topic.next_review_due and topic.next_review_due <= day else SessionType.NEW
-        ranked.append(RankedAction(topic.id, subject.id, minutes, breakdown, session_type))
+        ranked.append(RankedAction(topic.id, subject.id, minutes, breakdown, session_type, activity))
     return sorted(ranked, key=lambda item: (-item.score.per_minute, item.topic_id))
 
 
@@ -64,11 +70,7 @@ def generate_adaptive_week(
     workloads: dict[str, float] | None = None,
     utility_weights: UtilityWeights = UtilityWeights(),
 ) -> list[StudySession]:
-    """Greedy V2 allocation used as a deterministic baseline before full CP-SAT integration.
-
-    It allocates in 15-minute quanta while protecting the existing rest-day/session limits.
-    The production CP-SAT integration can consume the same RankedAction objects later.
-    """
+    """Greedy V2 allocation using the same activity-aware utility objective."""
     sessions: list[StudySession] = []
     quantum = 15
     for offset in range(days):
@@ -91,6 +93,7 @@ def generate_adaptive_week(
                     action.topic_id,
                     minutes,
                     session_type=action.session_type,
+                    activity=action.activity,
                 )
             )
             remaining -= minutes
