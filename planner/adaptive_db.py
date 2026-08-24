@@ -5,6 +5,7 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
+from .cross_curriculum import CurriculumMapping, deduplicate_mappings
 from .models import clamp
 from .state import CurriculumNode, KnowledgeComponent, StudentFSRSState, StudentKnowledgeState
 from .storage import StudyDB
@@ -52,6 +53,15 @@ class AdaptiveDB:
                     initial_mastery REAL NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_kc_topic ON knowledge_components(topic_id);
+                CREATE TABLE IF NOT EXISTS knowledge_component_curriculum_links (
+                    knowledge_component_id TEXT NOT NULL REFERENCES knowledge_components(id) ON DELETE CASCADE,
+                    node_id TEXT NOT NULL REFERENCES curriculum_nodes(id) ON DELETE CASCADE,
+                    source TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 1.0,
+                    relation TEXT NOT NULL DEFAULT 'covers',
+                    PRIMARY KEY(knowledge_component_id,node_id,relation)
+                );
+                CREATE INDEX IF NOT EXISTS idx_kc_curriculum_node ON knowledge_component_curriculum_links(node_id);
                 CREATE TABLE IF NOT EXISTS student_knowledge (
                     knowledge_component_id TEXT PRIMARY KEY REFERENCES knowledge_components(id) ON DELETE CASCADE,
                     mastery_probability REAL NOT NULL,
@@ -167,6 +177,44 @@ class AdaptiveDB:
                 (topic_id,),
             ).fetchall()
         return [CurriculumNode(r["id"], r["name"], r["node_type"], r["parent_id"], r["source"]) for r in rows]
+
+    def save_curriculum_mappings(self, mappings: list[CurriculumMapping]) -> None:
+        clean = deduplicate_mappings(mappings)
+        with self.db.connection() as conn:
+            for mapping in clean:
+                if conn.execute("SELECT 1 FROM knowledge_components WHERE id=?", (mapping.knowledge_component_id,)).fetchone() is None:
+                    raise ValueError(f"unknown knowledge component: {mapping.knowledge_component_id}")
+                if conn.execute("SELECT 1 FROM curriculum_nodes WHERE id=?", (mapping.curriculum_node_id,)).fetchone() is None:
+                    raise ValueError(f"unknown curriculum node: {mapping.curriculum_node_id}")
+                conn.execute(
+                    """INSERT INTO knowledge_component_curriculum_links
+                    (knowledge_component_id,node_id,source,confidence,relation)
+                    VALUES (?,?,?,?,?)
+                    ON CONFLICT(knowledge_component_id,node_id,relation) DO UPDATE SET
+                    source=excluded.source,confidence=excluded.confidence""",
+                    (mapping.knowledge_component_id, mapping.curriculum_node_id, mapping.source,
+                     mapping.confidence, mapping.relation),
+                )
+
+    def curriculum_mappings_for_kc(self, knowledge_component_id: str) -> list[CurriculumMapping]:
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                """SELECT knowledge_component_id,node_id,source,confidence,relation
+                FROM knowledge_component_curriculum_links
+                WHERE knowledge_component_id=? ORDER BY source,node_id,relation""",
+                (knowledge_component_id,),
+            ).fetchall()
+        return [CurriculumMapping(r["knowledge_component_id"], r["node_id"], r["source"], r["confidence"], r["relation"]) for r in rows]
+
+    def knowledge_components_for_node(self, node_id: str) -> list[KnowledgeComponent]:
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                """SELECT k.* FROM knowledge_components k
+                JOIN knowledge_component_curriculum_links l ON l.knowledge_component_id=k.id
+                WHERE l.node_id=? ORDER BY k.topic_id,k.id""",
+                (node_id,),
+            ).fetchall()
+        return [KnowledgeComponent(r["id"], r["topic_id"], r["name"], r["initial_mastery"]) for r in rows]
 
     def save_knowledge_components(self, components: list[KnowledgeComponent]) -> None:
         with self.db.connection() as conn:
