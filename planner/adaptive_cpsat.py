@@ -50,6 +50,7 @@ def optimize_adaptive_week(
 
     quantum = 15
     max_blocks = max(0, profile.daily_available_minutes // quantum)
+    max_session_blocks = max(1, profile.max_session_minutes // quantum)
     capacities: dict[int, int] = {}
     for d in range(days):
         day = start + timedelta(days=d)
@@ -60,6 +61,7 @@ def optimize_adaptive_week(
     subject_map = {s.id: s for s in active}
     topic_map = {t.id: t for t in topics}
     vars_: dict[tuple[str, int], cp_model.IntVar] = {}
+    topic_targets: dict[str, int] = {}
     explanations: dict[str, tuple[str, ...]] = {}
     objective = []
 
@@ -68,14 +70,17 @@ def optimize_adaptive_week(
             continue
         expected = max(15.0, workloads.get(topic.id, topic.estimated_hours * 60.0))
         target = max(1, math.ceil(expected / quantum))
+        pre_blocks = max(0, preallocated_topic_minutes.get(topic.id, 0) // quantum)
+        remaining_target = max(0, target - pre_blocks)
+        topic_targets[topic.id] = remaining_target
         for d in range(days):
-            if capacities[d] <= 0:
+            if capacities[d] <= 0 or remaining_target <= 0:
                 continue
             day = start + timedelta(days=d)
             exam = best_exam_for_topic(topic, exams, day)
             if exam is not None and day > exam.date:
                 continue
-            upper = min(capacities[d], target)
+            upper = min(capacities[d], max_session_blocks, remaining_target)
             var = model.NewIntVar(0, upper, f"adaptive_{topic.id}_{d}")
             vars_[(topic.id, d)] = var
             breakdown = action_utility(
@@ -95,6 +100,12 @@ def optimize_adaptive_week(
 
     for d in range(days):
         model.Add(sum(v for (_, dd), v in vars_.items() if dd == d) <= capacities[d])
+
+    # Do not schedule more time for a topic than its remaining estimated workload.
+    for topic_id, remaining_target in topic_targets.items():
+        topic_vars = [v for (tid, _), v in vars_.items() if tid == topic_id]
+        if topic_vars:
+            model.Add(sum(topic_vars) <= remaining_target)
 
     # Weekly fairness is a minimum guaranteed allocation, softened only when the
     # available horizon physically cannot satisfy it.
