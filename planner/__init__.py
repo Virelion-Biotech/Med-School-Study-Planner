@@ -12,6 +12,7 @@ from .state import *
 from .utility import UtilityBreakdown, UtilityWeights, action_utility
 from .workload import initial_workload, update_workload
 
-# Registers V2 curriculum and cross-curriculum routes on the shared FastAPI app.
+# Registers V2 curriculum, cross-curriculum, and KC planning routes on the shared FastAPI app.
 from . import curriculum_api as _curriculum_api  # noqa: F401,E402
 from . import cross_curriculum_api as _cross_curriculum_api  # noqa: F401,E402
+from . import kc_api as _kc_api  # noqa: F401,E402
