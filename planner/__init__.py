@@ -9,3 +9,6 @@ from .readiness import ReadinessComponents, readiness_from_signals
 from .state import *
 from .utility import UtilityBreakdown, UtilityWeights, action_utility
 from .workload import initial_workload, update_workload
+
+# Registers the V2 curriculum import/snapshot routes on the shared FastAPI app.
+from . import curriculum_api as _curriculum_api  # noqa: F401,E402
