@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 import math
 
+from .activity import ActivityType, activity_profile
 from .models import Exam, Subject, Topic, clamp
 
 
@@ -15,6 +16,7 @@ class UtilityWeights:
     blueprint: float = 0.7
     workload: float = 0.5
     block_relevance: float = 0.35
+    activity_fit: float = 0.55
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,8 @@ class UtilityBreakdown:
     blueprint: float
     workload: float
     block_relevance: float
+    activity_fit: float
+    activity: ActivityType
     reasons: tuple[str, ...]
 
 
@@ -45,6 +49,18 @@ def expected_retrievability(stability_days: float | None, elapsed_days: float | 
     return math.exp(-max(0.0, elapsed_days or 0.0) / stability_days)
 
 
+def _activity_fit(activity: ActivityType, mastery_gap: float, retention_gap: float, blueprint: float) -> float:
+    profile = activity_profile(activity)
+    # Practice need peaks after basic acquisition but before full mastery.
+    practice_need = clamp(1.0 - abs(0.55 - (1.0 - mastery_gap)) / 0.55)
+    raw = (
+        profile.learning_gain * mastery_gap
+        + profile.retention_gain * retention_gap
+        + profile.practice_gain * practice_need * (0.5 + 0.5 * blueprint)
+    ) / 3.0
+    return clamp(raw)
+
+
 def action_utility(
     topic: Topic,
     subject: Subject,
@@ -55,6 +71,7 @@ def action_utility(
     retrievability: float | None = None,
     current_block: str | None = None,
     topic_block: str | None = None,
+    activity: ActivityType = ActivityType.MIXED,
     weights: UtilityWeights = UtilityWeights(),
 ) -> UtilityBreakdown:
     mastery = clamp(topic.mastery if mastery_probability is None else mastery_probability)
@@ -63,13 +80,17 @@ def action_utility(
     blueprint = clamp(subject.exam_weight if subject.exam_weight <= 1 else subject.exam_weight / 16.0)
     workload = clamp(expected_minutes / 240.0)
     block = 1.0 if current_block and topic_block and topic_block == current_block else 0.0
+    mastery_gap = 1.0 - mastery
+    retention_gap = 1.0 - retention
+    activity_fit = _activity_fit(activity, mastery_gap, retention_gap, blueprint)
     total = (
         weights.exam_urgency * urgency
-        + weights.mastery_gap * (1.0 - mastery)
-        + weights.retention_gap * (1.0 - retention)
+        + weights.mastery_gap * mastery_gap
+        + weights.retention_gap * retention_gap
         + weights.blueprint * blueprint
         + weights.workload * workload
         + weights.block_relevance * block
+        + weights.activity_fit * activity_fit
     )
     per_minute = total / max(expected_minutes, 1.0)
     reasons: list[str] = []
@@ -83,6 +104,17 @@ def action_utility(
         reasons.append("high exam blueprint weight")
     if block:
         reasons.append("matches the current block")
-    if not reasons:
-        reasons.append("highest expected learning gain per minute")
-    return UtilityBreakdown(total, per_minute, urgency, 1.0 - mastery, 1.0 - retention, blueprint, workload, block, tuple(reasons))
+    reasons.append(f"activity fit: {activity.value}")
+    return UtilityBreakdown(
+        total,
+        per_minute,
+        urgency,
+        mastery_gap,
+        retention_gap,
+        blueprint,
+        workload,
+        block,
+        activity_fit,
+        activity,
+        tuple(reasons),
+    )
