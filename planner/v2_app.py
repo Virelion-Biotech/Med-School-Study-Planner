@@ -12,6 +12,7 @@ from .api import app, db
 from .evidence import summarize_question_evidence
 from .fsrs import FSRSAdapter
 from .irt import evidence_sufficient
+from .kc_planning import optimize_with_kc_state
 from .mastery import update_bkt
 from .questions import QuestionOutcome, record_question
 from .readiness import readiness_from_signals
@@ -73,9 +74,10 @@ class KnowledgeComponentRequest(BaseModel):
 def adaptive_status():
     return {
         "version": "2",
-        "engine": "FSRS + BKT + workload + evidence-aware utility/min + CP-SAT",
+        "engine": "FSRS + BKT + workload + evidence-aware utility/min + CP-SAT + canonical KC state",
         "legacy_routes_preserved": True,
         "irt_enabled": False,
+        "canonical_planner_default": True,
     }
 
 
@@ -247,8 +249,20 @@ def adaptive_why(topic_id: str):
     return asdict(breakdown) | {"evidence": asdict(summarize_question_evidence(adaptive_db, topic_id, datetime.now(timezone.utc)))}
 
 
+def _plan_response(plan):
+    return {
+        "status": plan.status,
+        "sessions": [asdict(s) | {"session_type": s.session_type.value, "activity_type": s.activity.value} for s in plan.sessions],
+        "subject_minutes": plan.subject_minutes,
+        "unfulfilled_subject_floor": plan.unfulfilled_subject_floor,
+        "unfulfilled_exam_coverage": plan.unfulfilled_exam_coverage,
+        "explanations": plan.explanations,
+    }
+
+
 @app.post("/v2/plan")
 def adaptive_plan(request: AdaptivePlanRequest):
+    """Canonical KC-aware planner with Topic-level compatibility built in."""
     subjects, topics, exams = db.load_curriculum()
     if not subjects or not topics:
         raise HTTPException(status_code=409, detail="No saved curriculum to plan")
@@ -256,7 +270,11 @@ def adaptive_plan(request: AdaptivePlanRequest):
     for topic in topics:
         row = adaptive_db.get_workload(topic.id)
         workloads[topic.id] = float(row["predicted_minutes"]) if row else initial_workload(topic).predicted_minutes
-    plan = optimize_adaptive_week(
+
+    # project_kc_state_onto_topics preserves legacy topics without KCs unchanged,
+    # so a single constrained solve can cover both canonical and legacy data.
+    plan = optimize_with_kc_state(
+        adaptive_db,
         subjects,
         topics,
         exams,
@@ -270,14 +288,18 @@ def adaptive_plan(request: AdaptivePlanRequest):
         request.current_block,
         request.weights,
     )
-    return {
-        "status": plan.status,
-        "sessions": [asdict(s) | {"session_type": s.session_type.value, "activity_type": s.activity.value} for s in plan.sessions],
-        "subject_minutes": plan.subject_minutes,
-        "unfulfilled_subject_floor": plan.unfulfilled_subject_floor,
-        "unfulfilled_exam_coverage": plan.unfulfilled_exam_coverage,
-        "explanations": plan.explanations,
-    }
+    status = "canonical_kc" if any(adaptive_db.load_knowledge_components(t.id) for t in topics) else "legacy_topic_fallback"
+    if not any(adaptive_db.load_knowledge_components(t.id) for t in topics):
+        status = plan.status
+    plan = type(plan)(
+        sessions=plan.sessions,
+        subject_minutes=plan.subject_minutes,
+        unfulfilled_subject_floor=plan.unfulfilled_subject_floor,
+        unfulfilled_exam_coverage=plan.unfulfilled_exam_coverage,
+        explanations=plan.explanations,
+        status=status,
+    )
+    return _plan_response(plan)
 
 
 @app.post("/v2/workload/{topic_id}/calibrate")
