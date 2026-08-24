@@ -12,7 +12,6 @@ from .api import app, db
 from .fsrs import FSRSAdapter
 from .irt import evidence_sufficient
 from .mastery import update_bkt
-from .models import Topic
 from .questions import QuestionOutcome, record_question
 from .readiness import readiness_from_signals
 from .state import CurriculumNode, KnowledgeComponent, StudentKnowledgeState
@@ -274,9 +273,8 @@ def calibrate_workload(topic_id: str):
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
     history = [x["actual_minutes"] for x in db.snapshot()["sessions"] if x["topic_id"] == topic_id and x["completed"] and x["actual_minutes"]]
-    current_row = adaptive_db.get_workload(topic_id)
-    estimate = WorkloadEstimate(**current_row) if current_row else initial_workload(topic)
-    updated = update_workload(estimate, [int(x) for x in history])
+    # Rebuild from the original prior + complete observation history so repeated calibration is idempotent.
+    updated = update_workload(initial_workload(topic), [int(x) for x in history])
     adaptive_db.save_workload(updated)
     topic.workload_confidence = updated.confidence
     db.update_topic(topic)
