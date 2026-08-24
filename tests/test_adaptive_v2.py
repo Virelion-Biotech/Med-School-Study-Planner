@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from planner.curriculum import CurriculumGraph
 from planner.fsrs import FSRSAdapter
@@ -6,7 +6,7 @@ from planner.mastery import StudentKnowledgeState, update_bkt
 from planner.models import Exam, Subject, Topic
 from planner.utility import action_utility, smooth_exam_urgency
 from planner.workload import initial_workload, update_workload
-from planner.state import CurriculumNode, KnowledgeComponent
+from planner.state import CurriculumNode
 
 
 def test_curriculum_graph_supports_multiple_levels():
@@ -68,5 +68,6 @@ def test_fsrs_round_trip_and_ratings():
 
 
 def test_urgency_is_smooth_not_discontinuous():
-    values = [smooth_exam_urgency(date(2026, 8, 24), date(2026, 8, 24 + offset)) for offset in range(0, 4)]
+    start = date(2026, 8, 24)
+    values = [smooth_exam_urgency(start, start + timedelta(days=offset)) for offset in range(0, 4)]
     assert values[0] > values[1] > values[2] > values[3]
