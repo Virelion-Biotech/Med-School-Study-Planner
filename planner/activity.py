@@ -26,7 +26,27 @@ def activity_profile(activity: ActivityType) -> ActivityProfile:
     return ACTIVITY_PROFILES[activity]
 
 
-def choose_default_activity(is_due: bool, mastery: float, performance: float | None = None) -> ActivityType:
+def choose_default_activity(
+    is_due: bool,
+    mastery: float,
+    performance: float | None = None,
+    confidence_gap: float = 0.0,
+    evidence_strength: float = 0.0,
+) -> ActivityType:
+    """Choose work type from mastery plus recent empirical performance.
+
+    Evidence is deliberately ignored while its strength is effectively zero,
+    preserving the old cold-start behavior.
+    """
+    if evidence_strength > 0 and performance is not None:
+        if performance < 0.45:
+            return ActivityType.QUESTIONS if evidence_strength >= 0.35 else ActivityType.LEARN
+        if confidence_gap >= 0.20:
+            return ActivityType.QUESTIONS
+        if is_due and performance >= 0.80:
+            return ActivityType.REVIEW
+        if performance < 0.70:
+            return ActivityType.RECALL
     if is_due:
         return ActivityType.REVIEW
     if mastery < 0.40:
