@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .memory import MemoryState
-from .models import Exam, StudySession, Subject, Topic, UserProfile
+from .models import ActivityType, Exam, StudySession, Subject, Topic, UserProfile
 
 CURRENT_USER: ContextVar[str] = ContextVar("planner_user", default="default")
 
@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS study_sessions (
  topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
  planned_minutes INTEGER NOT NULL, actual_minutes INTEGER,
  session_type TEXT NOT NULL, performance_score REAL,
+ activity_type TEXT NOT NULL DEFAULT 'mixed',
  completed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS memory_states (
  topic_id TEXT PRIMARY KEY REFERENCES topics(id) ON DELETE CASCADE,
@@ -63,6 +64,9 @@ TOPIC_MIGRATION_COLUMNS = {
     "memory_retrievability": "REAL",
     "workload_confidence": "REAL NOT NULL DEFAULT 0.25",
 }
+SESSION_MIGRATION_COLUMNS = {
+    "activity_type": "TEXT NOT NULL DEFAULT 'mixed'",
+}
 
 
 class StudyDB:
@@ -79,11 +83,16 @@ class StudyDB:
         return str(base.with_name(f"{base.stem}-{digest}{base.suffix}"))
 
     @staticmethod
-    def _migrate_topics(conn: sqlite3.Connection) -> None:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(topics)").fetchall()}
-        for name, definition in TOPIC_MIGRATION_COLUMNS.items():
-            if name not in columns:
-                conn.execute(f"ALTER TABLE topics ADD COLUMN {name} {definition}")
+    def _migrate_table_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for name, definition in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+    @classmethod
+    def _migrate_schema(cls, conn: sqlite3.Connection) -> None:
+        cls._migrate_table_columns(conn, "topics", TOPIC_MIGRATION_COLUMNS)
+        cls._migrate_table_columns(conn, "study_sessions", SESSION_MIGRATION_COLUMNS)
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
@@ -94,7 +103,7 @@ class StudyDB:
         conn.execute("PRAGMA foreign_keys = ON")
         try:
             conn.executescript(SCHEMA)
-            self._migrate_topics(conn)
+            self._migrate_schema(conn)
             yield conn
             conn.commit()
         finally:
@@ -103,7 +112,7 @@ class StudyDB:
     def initialize(self) -> None:
         with self.connection() as conn:
             conn.executescript(SCHEMA)
-            self._migrate_topics(conn)
+            self._migrate_schema(conn)
 
     def save_profile(self, profile: UserProfile, user_id: str = "default") -> None:
         with self.connection() as conn:
@@ -218,7 +227,10 @@ class StudyDB:
         ids: list[int] = []
         with self.connection() as conn:
             for s in sessions:
-                cur = conn.execute("INSERT INTO study_sessions (session_date, topic_id, planned_minutes, actual_minutes, session_type, performance_score) VALUES (?, ?, ?, ?, ?, ?)", (s.date.isoformat(), s.topic_id, s.planned_minutes, s.actual_minutes, s.session_type.value, s.performance_score))
+                cur = conn.execute(
+                    "INSERT INTO study_sessions (session_date, topic_id, planned_minutes, actual_minutes, session_type, performance_score, activity_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (s.date.isoformat(), s.topic_id, s.planned_minutes, s.actual_minutes, s.session_type.value, s.performance_score, s.activity.value),
+                )
                 ids.append(int(cur.lastrowid))
         return ids
 
