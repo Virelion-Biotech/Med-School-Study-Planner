@@ -5,7 +5,7 @@ import math
 import sys
 from datetime import date
 
-from planner.calibration import calibration_report
+from planner.calibration import calibrate_binary_predictions
 from planner.evaluation import synthetic_student
 from planner.models import StudySession
 from planner.simulation import compare_student_population
@@ -48,9 +48,9 @@ def main() -> int:
     if not all(0.0 <= t.mastery <= 1.0 for t in topics):
         errors.append("topic mastery outside [0,1]")
 
-    # Smoke-test the longitudinal simulator on paired students. This is intentionally
-    # small enough for CI while still exercising the full scheduler stack.
-    metrics = compare_student_population(subjects, topics, exams, profile, start, range(1, args.seeds + 1), args.days)
+    metrics = compare_student_population(
+        subjects, topics, exams, profile, start, range(1, args.seeds + 1), args.days
+    )
     for metric in metrics:
         values = (
             metric.completion_rate,
@@ -60,14 +60,19 @@ def main() -> int:
             metric.deadline_coverage,
         )
         if not all(math.isfinite(x) for x in values):
-            errors.append(f"non-finite simulation metric for seed={metric.student_seed}, planner={metric.planner}")
+            errors.append(
+                f"non-finite simulation metric for seed={metric.student_seed}, planner={metric.planner}"
+            )
 
-    # Deterministic binary calibration smoke-test for the validation layer.
-    cal = calibration_report([0.1, 0.3, 0.7, 0.9], [0, 0, 1, 1])
+    cal = calibrate_binary_predictions([0.1, 0.3, 0.7, 0.9], [False, False, True, True])
     if cal.expected_calibration_error > args.max_ece:
-        errors.append(f"calibration ECE too high: {cal.expected_calibration_error:.4f}>{args.max_ece:.4f}")
+        errors.append(
+            f"calibration ECE too high: {cal.expected_calibration_error:.4f}>{args.max_ece:.4f}"
+        )
     if cal.brier_score > args.max_brier:
-        errors.append(f"calibration Brier score too high: {cal.brier_score:.4f}>{args.max_brier:.4f}")
+        errors.append(
+            f"calibration Brier score too high: {cal.brier_score:.4f}>{args.max_brier:.4f}"
+        )
 
     if errors:
         print("REGRESSION GATE: FAILED")
