@@ -1,9 +1,10 @@
 from datetime import date, datetime, timedelta, timezone
 
+from planner.adaptive_optimizer import generate_adaptive_week, rank_actions
 from planner.curriculum import CurriculumGraph
 from planner.fsrs import FSRSAdapter
 from planner.mastery import StudentKnowledgeState, update_bkt
-from planner.models import Exam, Subject, Topic
+from planner.models import Exam, Subject, Topic, UserProfile
 from planner.utility import action_utility, smooth_exam_urgency
 from planner.workload import initial_workload, update_workload
 from planner.state import CurriculumNode
@@ -55,6 +56,26 @@ def test_utility_per_minute_is_explainable_and_exam_sensitive():
     assert score.mastery_gap == 0.8
     assert score.retention_gap == 0.6
     assert score.reasons
+
+
+def test_rank_actions_prefers_high_expected_gain_per_minute():
+    subjects = [Subject("s", "Cardiology", exam_weight=1.0)]
+    topics = [
+        Topic("easy", "s", "Easy", estimated_hours=3, mastery=0.9, memory_retrievability=0.95),
+        Topic("weak", "s", "Weak", estimated_hours=0.5, mastery=0.1, memory_retrievability=0.4),
+    ]
+    ranked = rank_actions(subjects, topics, [], date(2026, 8, 24))
+    assert ranked[0].topic_id == "weak"
+
+
+def test_adaptive_week_respects_rest_days_and_daily_capacity():
+    subjects = [Subject("s", "Cardiology")]
+    topics = [Topic("t", "s", "Topic", estimated_hours=2)]
+    profile = UserProfile(daily_available_minutes=60, max_session_minutes=60, rest_weekdays=(1,))
+    sessions = generate_adaptive_week(subjects, topics, [], profile, date(2026, 8, 24), days=3)
+    assert sessions
+    assert all(s.planned_minutes <= 60 for s in sessions)
+    assert all(s.date.weekday() != 1 for s in sessions)
 
 
 def test_fsrs_round_trip_and_ratings():
