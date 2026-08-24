@@ -9,7 +9,18 @@ from planner.ablation import default_ablation_variants, simulate_variant
 from planner.evaluation_v2 import deltas, summarize_population
 from planner.evaluation import synthetic_student
 from planner.simulation import compare_student_population, make_student
-from planner.statistics import paired_from_metrics
+from planner.statistics import paired_bootstrap_ci, paired_from_metrics
+
+
+FIELDS = (
+    "mean_mastery",
+    "mean_retention",
+    "completion_rate",
+    "topic_coverage",
+    "deadline_coverage",
+    "overdue_reviews",
+    "fairness_gap_minutes",
+)
 
 
 def main() -> None:
@@ -18,6 +29,7 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=28)
     parser.add_argument("--start", default="2026-08-24")
     parser.add_argument("--ablation", action="store_true", help="run component ablations in addition to the main comparison")
+    parser.add_argument("--bootstrap", action="store_true", help="add paired bootstrap 95% confidence intervals")
     args = parser.parse_args()
 
     subjects, topics, exams, profile = synthetic_student(7)
@@ -29,9 +41,17 @@ def main() -> None:
     payload["deltas"] = deltas(summary, "legacy_greedy", "adaptive_cpsat")
 
     paired = {}
-    for field in ("mean_mastery", "mean_retention", "completion_rate", "topic_coverage", "deadline_coverage", "overdue_reviews", "fairness_gap_minutes"):
+    for field in FIELDS:
         effect = paired_from_metrics(metrics, field, "legacy_greedy", "adaptive_cpsat")
-        paired[field] = asdict(effect)
+        item = asdict(effect)
+        if args.bootstrap:
+            reference = {m.student_seed: float(getattr(m, field)) for m in metrics if m.planner == "legacy_greedy"}
+            candidate = {m.student_seed: float(getattr(m, field)) for m in metrics if m.planner == "adaptive_cpsat"}
+            seeds_shared = sorted(set(reference) & set(candidate))
+            item["bootstrap_ci95_low"], item["bootstrap_ci95_high"] = paired_bootstrap_ci(
+                [reference[s] for s in seeds_shared], [candidate[s] for s in seeds_shared]
+            )
+        paired[field] = item
     payload["paired_effects"] = paired
 
     if args.ablation:
@@ -46,7 +66,7 @@ def main() -> None:
         payload["ablation_effects_vs_full"] = {
             planner: {
                 field: asdict(paired_from_metrics(ablation_metrics, field, baseline, planner))
-                for field in ("mean_mastery", "mean_retention", "completion_rate", "topic_coverage", "deadline_coverage", "overdue_reviews", "fairness_gap_minutes")
+                for field in FIELDS
             }
             for planner in ablation_summary.planners
             if planner != baseline
