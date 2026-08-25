@@ -12,8 +12,10 @@ from .state import *
 from .utility import UtilityBreakdown, UtilityWeights, action_utility
 from .workload import initial_workload, update_workload
 
-# Registers V2 curriculum, cross-curriculum, KC planning, and workspace synchronization routes.
+# Registers V2 curriculum, cross-curriculum, KC planning, workspace synchronization,
+# and reconciliation preview routes.
 from . import curriculum_api as _curriculum_api  # noqa: F401,E402
 from . import cross_curriculum_api as _cross_curriculum_api  # noqa: F401,E402
 from . import kc_api as _kc_api  # noqa: F401,E402
 from . import sync_api as _sync_api  # noqa: F401,E402
+from . import reconcile_api as _reconcile_api  # noqa: F401,E402
