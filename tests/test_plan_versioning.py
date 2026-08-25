@@ -11,7 +11,7 @@ def _session(topic: str, minutes: int) -> StudySession:
         date=date(2026, 8, 25),
         topic_id=topic,
         planned_minutes=minutes,
-        session_type=SessionType.STUDY,
+        session_type=SessionType.NEW,
         activity=ActivityType.LEARN,
     )
 
