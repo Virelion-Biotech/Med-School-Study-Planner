@@ -18,9 +18,11 @@ jobs:
       - name: Install runtime and test dependencies
         run: pip install -e '.[all]'
       - name: Compile planner
-        run: python -m compileall -q planner scripts/platform_smoke.py
+        run: python -m compileall -q planner scripts/platform_smoke.py scripts/button_path_scrub.py
       - name: Frontend contract
         run: python scripts/frontend_contract.py
+      - name: Button path scrub
+        run: python scripts/button_path_scrub.py
       - name: Platform smoke
         run: python scripts/platform_smoke.py
       - name: Backend/API regression tests
