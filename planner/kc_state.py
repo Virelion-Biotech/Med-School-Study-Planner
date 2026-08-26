@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from statistics import mean
 
 from .models import clamp
 from .state import StudentKnowledgeState
@@ -15,6 +14,15 @@ class KCSignal:
     observations: int
     mapped_topic_ids: tuple[str, ...] = ()
     mapped_sources: tuple[str, ...] = ()
+
+    @property
+    def evidence_strength(self) -> float:
+        """Bounded evidence strength derived from observation count."""
+        return clamp(self.observations / (self.observations + 10.0)) if self.observations > 0 else 0.0
+
+
+# Backwards-compatible name used by the explanation layer.
+KCStateSummary = KCSignal
 
 
 def aggregate_topic_kc_signals(
