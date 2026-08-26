@@ -32,10 +32,10 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import os
-          p = Path('planner/static/api-config.js')
+          p = Path('planner/static/pages-api-config.js')
           text = p.read_text()
           url = os.environ['BACKEND_URL'].rstrip('/')
-          p.write_text(text.replace('https://REPLACE_WITH_YOUR_BACKEND_URL', url))
+          p.write_text(text.replace('__PLANNER_API_BASE__', url))
           PY
 
       - name: Upload Pages artifact
