@@ -15,6 +15,7 @@ jobs:
       - run: python -m compileall planner tests scripts
       - run: pytest -q
       - run: python scripts/regression_gate.py --seeds 5 --days 14
+      - run: python scripts/frontend_contract.py
       - name: Import all public planner modules
         run: python - <<'PY'
           import planner.health
