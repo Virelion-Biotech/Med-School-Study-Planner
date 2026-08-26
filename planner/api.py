@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -149,10 +149,7 @@ def setup_step1(request: Step1SetupRequest | None = None):
     subjects, topics, exams, profile = step1_preset(start)
     if request.current_block:
         block = request.current_block.strip().lower()
-        subjects = [
-            Subject(s.id, s.name, s.exam_weight * 2.2 if s.id.lower() == block else s.exam_weight, s.category)
-            for s in subjects
-        ]
+        subjects = [Subject(s.id, s.name, s.exam_weight * 2.2 if s.id.lower() == block else s.exam_weight, s.category) for s in subjects]
     db.save_profile(profile)
     db.save_curriculum(subjects, topics, exams)
     db.delete_uncompleted_sessions_in_range(start, start + timedelta(days=14))
@@ -256,13 +253,8 @@ def complete(session_id: int, request: CompleteRequest):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    # The legacy endpoint remains the browser-compatible mutation surface, but
-    # completion must feed the same authoritative V2 learner used by the new
-    # planner. Import lazily to avoid the api -> v2_app -> api import cycle.
     try:
-        from .v2_app import adaptive_session_observation
-        from .v2_app import SessionObservationRequest
+        from .v2_app import SessionObservationRequest, adaptive_session_observation
         adaptive = adaptive_session_observation(
             topic.id,
             SessionObservationRequest(
@@ -273,7 +265,6 @@ def complete(session_id: int, request: CompleteRequest):
         )
     except Exception as exc:  # pragma: no cover - defensive boundary around adaptive state
         return {"topic": asdict(db.get_topic(topic.id) or topic), "adaptive_error": str(exc)}
-
     return adaptive | {"status": "completed", "session_id": session_id}
 
 
@@ -338,35 +329,67 @@ def replan(request: ReplanRequest):
     subject_by_topic = {t.id: t.subject_id for t in topics}
     for row in locked.values():
         day = row["session_date"]
-        blocked[day] = blocked.get(day, 0) + int(row["planned_minutes"])
-        subject_id = subject_by_topic.get(row["topic_id"])
-        if subject_id:
-            locked_subject_minutes[subject_id] = locked_subject_minutes.get(subject_id, 0) + int(row["planned_minutes"])
-        locked_topic_minutes[row["topic_id"]] = locked_topic_minutes.get(row["topic_id"], 0) + int(row["planned_minutes"])
+        minutes = int(row["planned_minutes"])
+        blocked[day] = blocked.get(day, 0) + minutes
         locked_keys.add((day, row["topic_id"]))
-    result = (optimize_week if request.optimizer else generate_balanced_week)(subjects, topics, exams, profile, request.start_date, request.days, request.weights, blocked_minutes_by_day=blocked, preallocated_subject_minutes=locked_subject_minutes, preallocated_topic_minutes=locked_topic_minutes)
-    result_sessions = [s for s in result.sessions if (s.session_date.isoformat(), s.topic_id) not in locked_keys]
-    ids = db.save_sessions(result_sessions)
-    if result_sessions:
-        db.delete_uncompleted_sessions_in_range(request.start_date, request.start_date + timedelta(days=request.days), exclude_ids=requested)
-    return {"sessions": [asdict(s) | {"session_type": s.session_type.value, "activity_type": s.activity.value, "session_id": ids[i]} for i, s in enumerate(result_sessions)], "locked_session_ids": sorted(requested), "subject_minutes": result.subject_minutes, "unfulfilled_floor": result.unfulfilled_floor, "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage}
+        locked_topic_minutes[row["topic_id"]] = locked_topic_minutes.get(row["topic_id"], 0) + minutes
+        sid = subject_by_topic.get(row["topic_id"])
+        if sid:
+            locked_subject_minutes[sid] = locked_subject_minutes.get(sid, 0) + minutes
+    if request.optimizer:
+        result = optimize_week(subjects, topics, exams, profile, request.start_date, request.days, request.weights, blocked, locked_subject_minutes, locked_topic_minutes)
+    else:
+        result = generate_balanced_week(subjects, topics, exams, profile, request.start_date, request.days, request.weights, blocked, locked_subject_minutes)
+    end = request.start_date + timedelta(days=request.days)
+    db.delete_uncompleted_sessions_in_range(request.start_date, end, set(locked))
+    filtered = [s for s in result.sessions if (s.date.isoformat(), s.topic_id) not in locked_keys]
+    ids = db.save_sessions(filtered)
+    sessions = [asdict(s) | {"session_type": s.session_type.value, "activity_type": s.activity.value, "session_id": ids[i]} for i, s in enumerate(filtered)]
+    subject_minutes = dict(result.subject_minutes)
+    for sid, mins in locked_subject_minutes.items():
+        subject_minutes[sid] = subject_minutes.get(sid, 0) + mins
+    return {"sessions": sessions, "subject_minutes": subject_minutes, "unfulfilled_floor": result.unfulfilled_floor, "unfulfilled_exam_coverage": result.unfulfilled_exam_coverage, "optimizer": request.optimizer, "locked_session_ids": sorted(locked)}
+
+
+@app.get("/analytics")
+def analytics():
+    snap = db.snapshot()
+    return asdict(summarize(snap)) | {"topic_time_history": topic_time_history(snap)}
+
+
+@app.get("/memory/{topic_id}")
+def memory(topic_id: str):
+    if db.get_topic(topic_id) is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return asdict(db.get_memory_state(topic_id))
+
+
+@app.post("/calibrate")
+def calibrate():
+    snap = db.snapshot()
+    histories = topic_time_history(snap)
+    changed = []
+    for topic in db.load_curriculum()[1]:
+        history = histories.get(topic.id, [])
+        if len(history) >= 2:
+            recalibrated = recalibrated_complexity(topic, history)
+            if abs(recalibrated - topic.complexity) >= 0.02:
+                topic.complexity = recalibrated
+                db.update_topic(topic)
+                changed.append({"topic_id": topic.id, "complexity": recalibrated})
+    return {"updated": changed, "count": len(changed)}
+
+
+@app.get("/export/snapshot.json", response_class=PlainTextResponse)
+def export_snapshot():
+    return snapshot_json(db.snapshot())
+
+
+@app.get("/export/sessions.csv", response_class=PlainTextResponse)
+def export_sessions():
+    return sessions_csv(db.snapshot())
 
 
 @app.get("/snapshot")
 def snapshot():
     return db.snapshot()
-
-
-@app.get("/analytics")
-def analytics():
-    return summarize(db)
-
-
-@app.get("/export/sessions.csv")
-def export_sessions():
-    return PlainTextResponse(sessions_csv(db), media_type="text/csv")
-
-
-@app.get("/export/snapshot.json")
-def export_snapshot():
-    return PlainTextResponse(snapshot_json(db), media_type="application/json")
