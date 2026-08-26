@@ -1,7 +1,7 @@
 /* Public API routing for local FastAPI and GitHub Pages. */
 window.PLANNER_API_BASE = window.PLANNER_API_BASE ||
   (window.location.hostname.endsWith('.github.io')
-    ? 'https://REPLACE_WITH_YOUR_BACKEND_URL'
+    ? ''
     : 'http://127.0.0.1:8000');
 window.PLANNER_USER_ID = window.PLANNER_USER_ID || (() => {
   const key = 'med-school-planner-user-id';
@@ -15,14 +15,16 @@ window.PLANNER_USER_ID = window.PLANNER_USER_ID || (() => {
 window.PLANNER_REVISION = window.PLANNER_REVISION || (() => {
   const key = 'med-school-planner-revision';
   const raw = localStorage.getItem(key);
-  return raw === null ? null : Number(raw);
+  if (raw === null) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 })();
 window.plannerApiUrl = path => `${String(window.PLANNER_API_BASE).replace(/\/$/, '')}${path}`;
 const nativeFetch = window.fetch.bind(window);
-const API_PREFIXES = ['/health','/profile','/subjects','/topics','/exams','/plan','/replan','/setup','/presets','/sessions','/analytics','/memory','/calibrate','/snapshot','/export','/workspace'];
+const API_PREFIXES = ['/health','/profile','/subjects','/topics','/exams','/plan','/replan','/setup','/presets','/sessions','/analytics','/memory','/calibrate','/snapshot','/export','/workspace','/v2'];
 const isPlannerApi = input => typeof input === 'string' && (
   API_PREFIXES.some(p => input === p || input.startsWith(`${p}/`)) ||
-  input.startsWith(String(window.PLANNER_API_BASE).replace(/\/$/, '') + '/')
+  (window.PLANNER_API_BASE && input.startsWith(String(window.PLANNER_API_BASE).replace(/\/$/, '') + '/'))
 );
 window.fetch = async (input, init = {}) => {
   if (!isPlannerApi(input)) return nativeFetch(input, init);
