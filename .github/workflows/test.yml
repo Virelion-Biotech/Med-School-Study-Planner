@@ -15,3 +15,17 @@ jobs:
       - run: python -m compileall planner tests scripts
       - run: pytest -q
       - run: python scripts/regression_gate.py --seeds 5 --days 14
+      - name: Import all public planner modules
+        run: python - <<'PY'
+          import planner.health
+          import planner.observability
+          import planner.plan_policy
+          print('planner platform imports: OK')
+        PY
+      - name: Verify clean health configuration
+        run: python - <<'PY'
+          from planner.health import planner_health
+          report = planner_health(capacity_minutes=180, quantum_minutes=15, max_session_minutes=90)
+          assert report.ready, report
+          print(report)
+        PY
