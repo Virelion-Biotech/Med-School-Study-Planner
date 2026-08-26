@@ -15,9 +15,13 @@ jobs:
         with:
           python-version-file: .python-version
           cache: pip
-      - name: Install runtime dependencies
-        run: pip install -r requirements.txt
+      - name: Install runtime and test dependencies
+        run: pip install -e '.[all]'
       - name: Compile planner
         run: python -m compileall -q planner scripts/platform_smoke.py
+      - name: Frontend contract
+        run: python scripts/frontend_contract.py
       - name: Platform smoke
         run: python scripts/platform_smoke.py
+      - name: Backend/API regression tests
+        run: pytest -q
