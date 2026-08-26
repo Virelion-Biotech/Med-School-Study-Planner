@@ -1,23 +1,27 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import HTTPException
 
 from .api import app, db
 from .models import ActivityType, SessionType, StudySession
-from .v2_app import AdaptivePlanRequest, adaptive_plan
 
 
 @app.post("/v2/plan/persist")
-def persist_canonical_plan(request: AdaptivePlanRequest):
+def persist_canonical_plan(request):
     """Generate the canonical KC-aware plan and persist it as the active plan."""
+    # Import lazily to avoid coupling package initialization to the V2 app module.
+    from .v2_app import AdaptivePlanRequest, adaptive_plan
+
+    if not isinstance(request, AdaptivePlanRequest):
+        request = AdaptivePlanRequest.model_validate(request)
+
     payload = adaptive_plan(request)
     if not payload.get("sessions"):
         return payload | {"persisted": False, "session_ids": []}
 
-    end = request.start_date + __import__("datetime").timedelta(days=request.days)
+    end = request.start_date + timedelta(days=request.days)
     db.delete_uncompleted_sessions_in_range(request.start_date, end)
 
     sessions: list[StudySession] = []
@@ -37,8 +41,5 @@ def persist_canonical_plan(request: AdaptivePlanRequest):
     return payload | {
         "persisted": True,
         "session_ids": ids,
-        "sessions": [
-            payload["sessions"][i] | {"session_id": ids[i]}
-            for i in range(len(ids))
-        ],
+        "sessions": [payload["sessions"][i] | {"session_id": ids[i]} for i in range(len(ids))],
     }
