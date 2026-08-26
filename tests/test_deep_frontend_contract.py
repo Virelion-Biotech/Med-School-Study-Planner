@@ -9,13 +9,14 @@ INDEX = STATIC / "index.html"
 def test_required_runtime_dependencies_are_loaded_in_order():
     html = INDEX.read_text(encoding="utf-8")
     scripts = re.findall(r'<script[^>]+src=["\'](\./[^"\']+)["\']', html)
-    required = ["./api-config.js", "./app.js", "./simple-setup.js", "./school-official.js", "./product-suite.js", "./advanced-import.js", "./runtime-fixes.js", "./adaptive-v3.js", "./adaptive-why.js", "./sync-bridge.js", "./sync-ui.js"]
+    required = ["./api-config.js", "./pages-api-config.js", "./sync-bridge.js", "./app.js", "./simple-setup.js", "./personal-v2.js", "./school-official.js", "./product-suite.js", "./advanced-import.js", "./runtime-fixes.js", "./adaptive-v3.js", "./adaptive-why.js", "./sync-ui.js", "./human-scrub-fixes.js"]
     missing = [x for x in required if x not in scripts]
     assert not missing, f"required runtime assets are not loaded: {missing}"
     p = {x: scripts.index(x) for x in required}
-    assert p["./api-config.js"] < p["./app.js"] < p["./simple-setup.js"]
+    assert p["./api-config.js"] < p["./pages-api-config.js"] < p["./sync-bridge.js"] < p["./app.js"]
+    assert p["./app.js"] < p["./personal-v2.js"]
     assert p["./runtime-fixes.js"] < p["./adaptive-v3.js"] < p["./adaptive-why.js"]
-    assert p["./sync-bridge.js"] < p["./sync-ui.js"]
+    assert p["./sync-bridge.js"] < p["./sync-ui.js"] < p["./human-scrub-fixes.js"]
 
 
 def test_api_config_has_no_unconfigured_production_placeholder():
@@ -40,6 +41,20 @@ def test_frontend_uses_only_known_core_api_prefixes():
     allowed = ("/health", "/profile", "/subjects", "/topics", "/exams", "/plan", "/replan", "/setup", "/presets", "/sessions", "/analytics", "/memory", "/calibrate", "/snapshot", "/export", "/workspace", "/v2")
     unknown = sorted(p for p in paths if not p.startswith(allowed))
     assert not unknown, f"frontend references unexpected API paths: {unknown}"
+
+
+def test_personal_builder_path_is_real_and_not_onboarding_loop():
+    source = (STATIC / "human-scrub-fixes.js").read_text(encoding="utf-8")
+    assert "Build my own plan" in (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "startPersonalPlanner" in source
+    assert "setView('curriculum')" not in source
+
+
+def test_real_user_fixes_patch_broken_session_and_replan_paths():
+    source = (STATIC / "human-scrub-fixes.js").read_text(encoding="utf-8")
+    assert "[object Object]" in source
+    assert "/v2/plan/persist" in source
+    assert "window.replanWeek" in source
 
 
 def test_legacy_stale_asset_is_not_part_of_the_boot_graph():
