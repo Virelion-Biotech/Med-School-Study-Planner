@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-from datetime import datetime, timezone
 import hashlib
 import json
 from typing import Any
 
-from .plan_versioning import plan_fingerprint
 from .storage import StudyDB
 from .workspace_revision import WorkspaceConflict, WorkspaceRevisionStore
 
@@ -22,13 +19,16 @@ MUTATING_PATHS = (
     "/setup/",
     "/sessions/",
     "/calibrate",
+    "/v2/",
 )
 
 
 def is_mutating_planner_path(method: str, path: str) -> bool:
     if method.upper() not in MUTATING_METHODS:
         return False
-    return path in {"/profile", "/subjects", "/topics", "/exams", "/plan", "/replan", "/calibrate"} or any(path.startswith(prefix) for prefix in ("/setup/", "/sessions/"))
+    if path.startswith("/v2/reconcile/"):
+        return False
+    return path in {"/profile", "/subjects", "/topics", "/exams", "/plan", "/replan", "/calibrate"} or any(path.startswith(prefix) for prefix in ("/setup/", "/sessions/", "/v2/"))
 
 
 def current_plan_fingerprint(snapshot: dict[str, Any]) -> str:
@@ -38,7 +38,7 @@ def current_plan_fingerprint(snapshot: dict[str, Any]) -> str:
             "topic_id": row.get("topic_id"),
             "planned_minutes": int(row.get("planned_minutes", 0)),
             "completed": bool(row.get("completed", False)),
-            "activity": row.get("activity"),
+            "activity": row.get("activity") or row.get("activity_type"),
             "session_type": row.get("session_type"),
         }
         for row in snapshot.get("sessions", [])
@@ -72,12 +72,6 @@ def parse_revision(value: str | None) -> int | None:
 
 
 def claim_mutation(revisions: WorkspaceRevisionStore, header_value: str | None) -> int:
-    """Claim the next workspace version for a mutating request.
-
-    Missing revisions are accepted for backwards compatibility. New clients
-    should always send X-Planner-Revision from /workspace/state. Once supplied,
-    the value acts as an optimistic compare-and-swap token.
-    """
     expected = parse_revision(header_value)
     return revisions.claim(expected).revision
 
