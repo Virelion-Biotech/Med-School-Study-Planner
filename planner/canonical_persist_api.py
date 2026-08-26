@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from fastapi import app
-
 from .api import app, db
 from .models import ActivityType, SessionType, StudySession
 
