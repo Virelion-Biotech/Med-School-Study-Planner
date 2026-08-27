@@ -11,7 +11,6 @@ SCRUB = (ROOT / "planner/static/human-scrub-fixes.js").read_text(encoding="utf-8
 GUARD = (ROOT / "planner/static/button-path-guards.js").read_text(encoding="utf-8")
 RECOVERY = (ROOT / "planner/static/startup-recovery.js").read_text(encoding="utf-8")
 
-
 CASES = {
     "Today nav": "data-view=\"today\"",
     "My Week nav": "data-view=\"week\"",
@@ -52,8 +51,6 @@ CASES = {
     "Direct school button capture": "#school-direct-entry",
 }
 
-# Positive contracts may search the assembled implementation, but regression
-# checks below inspect APP only so the scrub cannot satisfy its own test.
 HAYSTACK = "\n".join((INDEX, APP, PRODUCT, SCHOOL, PERSONAL, SCRUB, GUARD, RECOVERY))
 for name, needle in CASES.items():
     if needle not in HAYSTACK:
@@ -63,5 +60,19 @@ if "$('#reset-btn').onclick=()=>{state.view='today';load()}" in APP:
     raise SystemExit("REGRESSION: Change plan still hard-resets to Today")
 if "$('#replan-btn').onclick=replanWeek" in APP:
     raise SystemExit("REGRESSION: header Rebuild week still captures legacy replan function")
+
+# The old dead-end message must not be shipped in any runtime layer. The
+# offline fallback has its own self-contained school chooser now.
+FORBIDDEN = "Medical school setup is still loading. Please try again."
+for path, text in {
+    "index.html": INDEX,
+    "app.js": APP,
+    "school-official.js": SCHOOL,
+    "runtime-fixes.js": (ROOT / "planner/static/runtime-fixes.js").read_text(encoding="utf-8"),
+    "human-scrub-fixes.js": SCRUB,
+    "startup-recovery.js": RECOVERY,
+}.items():
+    if FORBIDDEN in text:
+        raise SystemExit(f"REGRESSION: stale school-loading error remains in {path}")
 
 print(f"button path scrub: OK ({len(CASES)} contracts)")
