@@ -23,9 +23,15 @@ CASES = {
     "First-time USMLE": "startStep1()",
     "First-time personal": "startPersonalPlanner()",
     "School picker": "openSchoolPicker",
-    "Batterjee year picker": "levelPicker()",
-    "Batterjee course picker": "coursePicker",
-    "Batterjee build": "buildBMC",
+    "Batterjee school entry": "bmc: {",
+    "Harvard school entry": "harvard: {",
+    "Johns Hopkins school entry": "hopkins: {",
+    "Mayo school entry": "mayo: {",
+    "School visual marks": "school-mark",
+    "School chooser close": "school-close",
+    "School year picker": "levelPicker",
+    "School course picker": "coursePicker",
+    "School build": "buildSchool",
     "Other school -> personal": "startPersonalPlanner",
     "Personal build": "function build()",
     "Personal timetable import": "importTimetable",
@@ -42,9 +48,9 @@ CASES = {
     "Dynamic Tools guard": "removeAttribute('data-view')",
 }
 
+HAYSTACK = "\n".join((INDEX, APP, PRODUCT, SCHOOL, PERSONAL, SCRUB, GUARD))
 for name, needle in CASES.items():
-    haystack = "\n".join((INDEX, APP, PRODUCT, SCHOOL, PERSONAL, SCRUB, GUARD))
-    if needle not in haystack:
+    if needle not in HAYSTACK:
         raise SystemExit(f"MISSING PATH CONTRACT: {name}: {needle}")
 
 # Explicitly prohibit the most important regressions that the human scrub found.
