@@ -26,11 +26,13 @@ const isPlannerApi = input => typeof input === 'string' && (
   API_PREFIXES.some(p => input === p || input.startsWith(`${p}/`)) ||
   (window.PLANNER_API_BASE && input.startsWith(String(window.PLANNER_API_BASE).replace(/\/$/, '') + '/'))
 );
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 window.fetch = async (input, init = {}) => {
   if (!isPlannerApi(input)) return nativeFetch(input, init);
   const headers = new Headers(init.headers || {});
+  const method = String(init.method || 'GET').toUpperCase();
   headers.set('X-Planner-User', window.PLANNER_USER_ID);
-  if (window.PLANNER_REVISION !== null && !headers.has('X-Planner-Revision')) {
+  if (MUTATING_METHODS.has(method) && window.PLANNER_REVISION !== null && !headers.has('X-Planner-Revision')) {
     headers.set('X-Planner-Revision', String(window.PLANNER_REVISION));
   }
   if (!headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json');
