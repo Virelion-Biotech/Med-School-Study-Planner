@@ -52,12 +52,13 @@ CASES = {
     "Direct school button capture": "#school-direct-entry",
 }
 
+# Positive contracts may search the assembled implementation, but regression
+# checks below inspect APP only so the scrub cannot satisfy its own test.
 HAYSTACK = "\n".join((INDEX, APP, PRODUCT, SCHOOL, PERSONAL, SCRUB, GUARD, RECOVERY))
 for name, needle in CASES.items():
     if needle not in HAYSTACK:
         raise SystemExit(f"MISSING PATH CONTRACT: {name}: {needle}")
 
-# Explicitly prohibit the most important regressions that the human scrub found.
 if "$('#reset-btn').onclick=()=>{state.view='today';load()}" in APP:
     raise SystemExit("REGRESSION: Change plan still hard-resets to Today")
 if "$('#replan-btn').onclick=replanWeek" in APP:
