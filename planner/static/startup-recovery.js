@@ -2,6 +2,7 @@
   const qs = (selector, root = document) => [...root.querySelectorAll(selector)];
   const toast = message => window.toast && window.toast(String(message || ''));
   const getModal = () => document.querySelector('#modal');
+  const nativeSchoolPicker = typeof window.openSchoolPicker === 'function' ? window.openSchoolPicker : null;
 
   const SCHOOLS = [
     {id:'bmc', name:'Batterjee Medical College', country:'Saudi Arabia', mark:'BMC', years:['Preparatory Year','Year 2','Year 3','Year 4','Year 5','Year 6','Year 7']},
@@ -55,20 +56,20 @@
       localStorage.setItem('planner-block', b.dataset.fallbackCourse);
       localStorage.setItem('planner-school-fallback','1');
       closeModal();
-      toast(`${b.dataset.fallbackCourse} selected. Connect to the planner backend to generate and save the full adaptive schedule.`);
+      toast(`${b.dataset.fallbackCourse} selected. Connect the planner backend to generate and save the full adaptive schedule.`);
     }));
     m?.querySelector('#fallback-back-year')?.addEventListener('click', () => openYearFallback(id));
   }
 
   function openSchool() {
-    if (typeof window.openSchoolPicker === 'function' && window.openSchoolPicker !== openSchool) {
-      try { window.openSchoolPicker(); return true; } catch (_) {}
+    if (nativeSchoolPicker) {
+      try { nativeSchoolPicker(); return true; } catch (_) {}
     }
     openSchoolFallback();
     return true;
   }
   window.openSchoolWhenReady = openSchool;
-  window.openSchoolPicker = openSchool;
+  window.openSchoolPicker = nativeSchoolPicker || openSchool;
 
   function showOfflineRecovery() {
     const view = document.querySelector('#view');
@@ -79,7 +80,7 @@
     const copy = danger.querySelector('div:first-child');
     if (!copy) return;
     const p = copy.querySelector('p');
-    if (p) p.textContent = 'The planner backend is unavailable. Setup can still be opened, and your selection can be kept locally until the backend is available.';
+    if (p) p.textContent = 'The planner backend is unavailable. You can still choose a planning mode; selections remain available while the connection is restored.';
     const actions = document.createElement('div');
     actions.className = 'hero-actions';
     actions.innerHTML = '<button class="btn primary" type="button" id="offline-school">Medical school</button><button class="btn secondary" type="button" id="offline-usmle">USMLE Step 1</button><button class="btn ghost" type="button" id="offline-personal">Personal planner</button><button class="btn ghost" type="button" id="offline-retry">Retry connection</button>';
