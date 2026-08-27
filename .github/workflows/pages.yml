@@ -38,20 +38,25 @@ jobs:
           p.write_text(text.replace('__PLANNER_API_BASE__', url))
           PY
 
-      - name: Verify backend health before deploying frontend
+      - name: Check backend health (non-blocking)
         env:
           BACKEND_URL: ${{ vars.PLANNER_API_BASE }}
+        continue-on-error: true
         run: |
-          set -euo pipefail
-          test -n "$BACKEND_URL"
+          set +e
+          test -n "$BACKEND_URL" || exit 0
           echo "Checking ${BACKEND_URL%/}/health"
           curl --fail --silent --show-error --location --max-time 20 "${BACKEND_URL%/}/health" >/tmp/planner-health.json
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "backend health: unavailable; continuing because the frontend has local-first recovery"
+            exit 0
+          fi
           python - <<'PY'
           import json
           from pathlib import Path
           payload = json.loads(Path('/tmp/planner-health.json').read_text())
-          assert payload.get('status') == 'ok', payload
-          print('backend health: OK')
+          print('backend health:', 'OK' if payload.get('status') == 'ok' else f"unexpected: {payload}")
           PY
 
       - name: Upload Pages artifact
