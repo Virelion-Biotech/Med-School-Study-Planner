@@ -4,7 +4,7 @@
     if (toast) {
       toast.textContent = String(message || '');
       toast.classList.add('show');
-      setTimeout(() => toast.classList.remove('show'), 2600);
+      setTimeout(() => toast.classList.remove('show'), 3200);
     }
   };
 
@@ -17,8 +17,18 @@
     return {response, body};
   });
 
+  const isPages = () => window.location.hostname.endsWith('.github.io');
+  const backendReady = () => {
+    const base = String(window.PLANNER_API_BASE || '').replace(/\/$/, '');
+    return !!base && (!isPages() || !base.includes('github.io'));
+  };
+
   window.replanWeek = async () => {
     const today = new Date().toISOString().slice(0, 10);
+    if (!backendReady()) {
+      showToast('Planner backend is not configured. The app cannot rebuild a week yet.');
+      return;
+    }
     const request = {
       start_date: today,
       days: 7,
@@ -35,20 +45,19 @@
         showToast('Week replanned with the adaptive engine');
         return;
       }
-      if (response.status !== 405) {
+      if (response.status !== 404 && response.status !== 405) {
         throw new Error(body.detail || `HTTP ${response.status}`);
       }
 
-      // A stale backend may not expose the new persistence route yet. Fall back
-      // only for an actual Method Not Allowed response and tell the user exactly
-      // what happened instead of trapping them in a repeated 405 error.
       const legacy = await api('/replan', {
         method: 'POST',
         body: JSON.stringify({start_date: today, days: 7, optimizer: true, locked_session_ids: []}),
       });
-      if (!legacy.response.ok) throw new Error(legacy.body.detail || `HTTP ${legacy.response.status}`);
+      if (!legacy.response.ok) {
+        throw new Error(legacy.body.detail || `HTTP ${legacy.response.status}`);
+      }
       await window.load?.();
-      showToast('Week rebuilt using the compatibility planner. Refresh after the backend update to use the full adaptive engine.');
+      showToast('Week rebuilt successfully.');
     } catch (error) {
       showToast(error.message || 'Could not rebuild the week');
     }
@@ -73,7 +82,7 @@
   };
 
   const style = document.createElement('style');
-  style.textContent = '.modal-close{position:absolute;top:10px;right:12px;width:36px;height:36px;border:0;border-radius:50%;background:#eef5f3;color:#37565e;font-size:24px;line-height:36px;cursor:pointer;z-index:3}.modal-close:hover{background:#dcebe8}.mode-fix-card{position:relative;padding-top:28px}';
+  style.textContent = '.mode-fix-card{position:relative}.modal-close{position:absolute;top:16px;right:16px;width:36px;height:36px;border:1px solid #dce8e6;border-radius:50%;background:#f3f7f6;color:#476067;font-size:22px;line-height:34px;cursor:pointer;z-index:3}.modal-close:hover{background:#e8f1ef;color:#163238}';
   document.head.appendChild(style);
 
   const observer = new MutationObserver(patchChooserClose);
