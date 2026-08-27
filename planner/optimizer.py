@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import os
 from datetime import date
 
 from .adaptive_cpsat import optimize_adaptive_week
 from .models import Exam, PriorityWeights, Subject, Topic, UserProfile
 from .utility import UtilityWeights
-from .weekly import WeeklyPlan
+from .weekly import WeeklyPlan, generate_balanced_week
 
 
 def _utility_weights(weights: PriorityWeights) -> UtilityWeights:
@@ -32,7 +33,26 @@ def optimize_week(
     preallocated_subject_minutes: dict[str, int] | None = None,
     preallocated_topic_minutes: dict[str, int] | None = None,
 ) -> WeeklyPlan:
-    """Stable legacy return type backed by the V2 utility + CP-SAT engine."""
+    """Stable planner contract with a safe deterministic default.
+
+    Native CP-SAT is opt-in because a native solver crash must never take down
+    the student-facing setup/replan API. Enable it only after runtime validation
+    with PLANNER_ENABLE_CPSAT=1.
+    """
+    use_cpsat = os.getenv("PLANNER_ENABLE_CPSAT", "0").strip().lower() in {"1", "true", "yes", "on"}
+    if not use_cpsat:
+        return generate_balanced_week(
+            subjects,
+            topics,
+            exams,
+            profile,
+            start,
+            days,
+            weights,
+            blocked_minutes_by_day=blocked_minutes_by_day,
+            preallocated_subject_minutes=preallocated_subject_minutes,
+        )
+
     plan = optimize_adaptive_week(
         subjects,
         topics,
