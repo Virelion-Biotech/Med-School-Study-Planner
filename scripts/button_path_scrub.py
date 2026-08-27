@@ -9,6 +9,7 @@ SCHOOL = (ROOT / "planner/static/school-official.js").read_text(encoding="utf-8"
 PERSONAL = (ROOT / "planner/static/personal-v2.js").read_text(encoding="utf-8")
 SCRUB = (ROOT / "planner/static/human-scrub-fixes.js").read_text(encoding="utf-8")
 GUARD = (ROOT / "planner/static/button-path-guards.js").read_text(encoding="utf-8")
+RECOVERY = (ROOT / "planner/static/startup-recovery.js").read_text(encoding="utf-8")
 
 
 CASES = {
@@ -46,9 +47,12 @@ CASES = {
     "Session cancel": "closeModal()",
     "Tools launcher": "window.openTools",
     "Dynamic Tools guard": "removeAttribute('data-view')",
+    "Startup recovery": "showOfflineRecovery",
+    "Offline school button": "#offline-school",
+    "Direct school button capture": "#school-direct-entry",
 }
 
-HAYSTACK = "\n".join((INDEX, APP, PRODUCT, SCHOOL, PERSONAL, SCRUB, GUARD))
+HAYSTACK = "\n".join((INDEX, APP, PRODUCT, SCHOOL, PERSONAL, SCRUB, GUARD, RECOVERY))
 for name, needle in CASES.items():
     if needle not in HAYSTACK:
         raise SystemExit(f"MISSING PATH CONTRACT: {name}: {needle}")
