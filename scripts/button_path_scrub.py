@@ -10,6 +10,7 @@ PERSONAL = (ROOT / "planner/static/personal-v2.js").read_text(encoding="utf-8")
 SCRUB = (ROOT / "planner/static/human-scrub-fixes.js").read_text(encoding="utf-8")
 GUARD = (ROOT / "planner/static/button-path-guards.js").read_text(encoding="utf-8")
 RECOVERY = (ROOT / "planner/static/startup-recovery.js").read_text(encoding="utf-8")
+FINAL = (ROOT / "planner/static/final-button-fix.js").read_text(encoding="utf-8")
 
 CASES = {
     "Today nav": "data-view=\"today\"",
@@ -29,7 +30,7 @@ CASES = {
     "Mayo school entry": "mayo: {",
     "School visual marks": "school-mark",
     "School chooser close": "school-close",
-    "School year picker": "levelPicker",
+    "School year picker": "window.levelPicker",
     "School course picker": "coursePicker",
     "School build": "buildSchool",
     "Other school -> personal": "startPersonalPlanner",
@@ -51,7 +52,7 @@ CASES = {
     "Direct school button capture": "#school-direct-entry",
 }
 
-HAYSTACK = "\n".join((INDEX, APP, PRODUCT, SCHOOL, PERSONAL, SCRUB, GUARD, RECOVERY))
+HAYSTACK = "\n".join((INDEX, APP, PRODUCT, SCHOOL, PERSONAL, SCRUB, GUARD, RECOVERY, FINAL))
 for name, needle in CASES.items():
     if needle not in HAYSTACK:
         raise SystemExit(f"MISSING PATH CONTRACT: {name}: {needle}")
