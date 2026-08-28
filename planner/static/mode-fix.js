@@ -32,7 +32,7 @@
 
   const bind = () => {
     const b = document.querySelector('#mode-btn');
-    if (b) { b.type = 'button'; b.textContent = 'Change plan'; b.onclick = e => { e.preventDefault(); openChooser(); }; }
+    if (b) { b.type = 'button'; b.textContent = 'Change mode'; b.onclick = e => { e.preventDefault(); openChooser(); }; }
     const view = document.querySelector('#view');
     if (view && !document.querySelector('#school-direct-entry')) {
       const existing = view.querySelector('.hero-actions');
@@ -45,7 +45,7 @@
     }
   };
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind, {once:true});
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind, { once: true });
   else bind();
-  setTimeout(bind, 250);
+  setTimeout(bind, 200);
 })();
