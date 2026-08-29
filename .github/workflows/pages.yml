@@ -42,6 +42,15 @@ jobs:
           p.write_text(text.replace(marker, replacement, 1))
           PY
 
+      - name: Validate generated Pages configuration
+        run: |
+          test -f planner/static/index.html
+          test -f planner/static/pages-api-config.js
+          ! grep -q "__PLANNER_API_BASE__" planner/static/pages-api-config.js
+          grep -q "const configured='https://" planner/static/pages-api-config.js
+          find planner/static -maxdepth 1 -name '*.js' -print0 | xargs -0 -n1 node --check
+          python scripts/frontend_runtime_audit.py
+
       - name: Check backend health (non-blocking)
         env:
           BACKEND_URL: ${{ vars.PLANNER_API_BASE }}
@@ -50,18 +59,22 @@ jobs:
           set +e
           test -n "$BACKEND_URL" || exit 0
           echo "Checking ${BACKEND_URL%/}/health"
-          curl --fail --silent --show-error --location --max-time 20 "${BACKEND_URL%/}/health" >/tmp/planner-health.json
-          rc=$?
-          if [ $rc -ne 0 ]; then
-            echo "backend health: unavailable; continuing because the frontend has local-first recovery"
-            exit 0
-          fi
-          python - <<'PY'
+          for i in 1 2 3 4 5; do
+            if curl --fail --silent --show-error --location --max-time 20 "${BACKEND_URL%/}/health" >/tmp/planner-health.json; then
+              python - <<'PY'
           import json
           from pathlib import Path
           payload = json.loads(Path('/tmp/planner-health.json').read_text())
-          print('backend health:', 'OK' if payload.get('status') == 'ok' else f"unexpected: {payload}")
+          if payload.get('status') != 'ok':
+              raise SystemExit(f'unexpected backend health: {payload}')
+          print('backend health: OK')
           PY
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "backend health: unavailable; continuing because the frontend has local-first recovery"
+          exit 0
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
