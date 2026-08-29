@@ -35,7 +35,11 @@ jobs:
           p = Path('planner/static/pages-api-config.js')
           text = p.read_text()
           url = os.environ['BACKEND_URL'].rstrip('/')
-          p.write_text(text.replace('__PLANNER_API_BASE__', url))
+          marker = "const configured='__PLANNER_API_BASE__';"
+          replacement = f"const configured='{url}';"
+          if marker not in text:
+              raise SystemExit('GitHub Pages backend configuration marker not found')
+          p.write_text(text.replace(marker, replacement, 1))
           PY
 
       - name: Check backend health (non-blocking)
