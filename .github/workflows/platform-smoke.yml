@@ -15,12 +15,19 @@ jobs:
         with:
           python-version-file: .python-version
           cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Install runtime and test dependencies
         run: pip install -e '.[all]'
       - name: Compile planner
-        run: python -m compileall -q planner scripts/platform_smoke.py scripts/button_path_scrub.py
+        run: python -m compileall -q planner scripts/platform_smoke.py scripts/button_path_scrub.py scripts/frontend_runtime_audit.py
       - name: Frontend contract
         run: python scripts/frontend_contract.py
+      - name: Frontend runtime/static audit
+        run: |
+          python scripts/frontend_runtime_audit.py
+          find planner/static -maxdepth 1 -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Button path scrub
         run: python scripts/button_path_scrub.py
       - name: Platform smoke
